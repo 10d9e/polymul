@@ -3,7 +3,7 @@
 Leaderboard of recorded submissions. Full narratives live in
 [`history/entries/`](history/entries/).
 
-**Current record: 26638848** (@10d9e, entry 0028)
+**Current record: 25487616** (@10d9e, entry 0029)
 
 | # | date | author | SCORE | Δ vs record | commit | entry | note |
 |---|------|--------|-------|-------------|--------|-------|------|
@@ -35,3 +35,4 @@ Leaderboard of recorded submissions. Full narratives live in
 | 0026 | 2026-06-24 | @10d9e | 29231216 | -2875344 (new record) | `67c6a35` | [0026](history/entries/0026--10d9e.md) | Fuse the per-input reduction into the psi pre-weight: lazy Shoup accepts any u32 input, so a[j]*psi^j mod p is one ste… |
 | 0027 | 2026-06-24 | @10d9e | 29008896 | -222320 (new record) | `09ee130` | [0027](history/entries/0027--10d9e.md) | Montgomery pointwise product: carry the spectral domain in Montgomery form (R baked into psi, R^-1 into ipsi) so the po… |
 | 0028 | 2026-06-24 | @10d9e | 26638848 | -2370048 (new record) | `5b7f75d` | [0028](history/entries/0028--10d9e.md) | Fuse the two forward transforms (a and b) into one lockstep radix-4 DIF so the stage twiddle loads and index arithm… |
+| 0029 | 2026-06-24 | @10d9e | 25487616 | -1151232 (new record) | `5af0981` | [0029](history/entries/0029--10d9e.md) | Fuse last two forward DIF stages into a radix-16 register pass The last two radi… |
