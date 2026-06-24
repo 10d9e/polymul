@@ -3,7 +3,7 @@
 Leaderboard of recorded submissions. Full narratives live in
 [`history/entries/`](history/entries/).
 
-**Current record: 24654528** (@10d9e, entry 0030)
+**Current record: 24215232** (@10d9e, entry 0031)
 
 | # | date | author | SCORE | Δ vs record | commit | entry | note |
 |---|------|--------|-------|-------------|--------|-------|------|
@@ -37,3 +37,4 @@ Leaderboard of recorded submissions. Full narratives live in
 | 0028 | 2026-06-24 | @10d9e | 26638848 | -2370048 (new record) | `5b7f75d` | [0028](history/entries/0028--10d9e.md) | Fuse the two forward transforms (a and b) into one lockstep radix-4 DIF so the stage twiddle loads and index arithm… |
 | 0029 | 2026-06-24 | @10d9e | 25487616 | -1151232 (new record) | `5af0981` | [0029](history/entries/0029--10d9e.md) | Fuse last two forward DIF stages into a radix-16 register pass The last two radi… |
 | 0030 | 2026-06-24 | @10d9e | 24654528 | -833088 (new record) | `2c1bc5b` | [0030](history/entries/0030--10d9e.md) | Fuse first two inverse DIT stages into a radix-16 register pass Mirror of the fo… |
+| 0031 | 2026-06-24 | @10d9e | 24215232 | -439296 (new record) | `5bee2a3` | [0031](history/entries/0031--10d9e.md) | Fold the spectral pointwise product into the inverse transform The Montgomery po… |
