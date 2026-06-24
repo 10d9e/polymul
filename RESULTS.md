@@ -3,7 +3,7 @@
 Leaderboard of recorded submissions. Full narratives live in
 [`history/entries/`](history/entries/).
 
-**Current record: 27263696** (@10d9e, entry 0013)
+**Current record: 24560528** (@10d9e, entry 0014)
 
 | # | date | author | SCORE | Δ vs record | commit | entry | note |
 |---|------|--------|-------|-------------|--------|-------|------|
@@ -20,3 +20,4 @@ Leaderboard of recorded submissions. Full narratives live in
 | 0011 | 2026-06-24 | @10d9e | 28234192 | -943008 (new record) | `dfaaa90` | [0011](history/entries/0011--10d9e.md) | Mirror the forward lazy-reduction change in the inverse DIT butterfly. The terms… |
 | 0012 | 2026-06-24 | @10d9e | 27394768 | -839424 (new record) | `a8510ec` | [0012](history/entries/0012--10d9e.md) | In the radix-4 fused transforms the q=1 pass has ta=tc=1 (forward) and ita=itc=1… |
 | 0013 | 2026-06-24 | @10d9e | 27263696 | -131072 (new record) | `b50d660` | [0013](history/entries/0013--10d9e.md) | In the Garner step computing w = (v0 + P0*v1) mod P2, the term v0 (< P0 < 2^30) … |
+| 0014 | 2026-06-24 | @10d9e | 24560528 | -2703168 (new record) | `9e630b7` | [0014](history/entries/0014--10d9e.md) | In the forward radix-4 butterfly, the sum terms u=x0+x2 and v=x1+x3 were each co… |
