@@ -3,7 +3,7 @@
 Leaderboard of recorded submissions. Full narratives live in
 [`history/entries/`](history/entries/).
 
-**Current record: 29231216** (@10d9e, entry 0026)
+**Current record: 29008896** (@10d9e, entry 0027)
 
 | # | date | author | SCORE | Δ vs record | commit | entry | note |
 |---|------|--------|-------|-------------|--------|-------|------|
@@ -33,3 +33,4 @@ Leaderboard of recorded submissions. Full narratives live in
 | 0024 | 2026-06-24 | @10d9e | 34777856 | -3145168 (new record) | `d1743eb` | [0024](history/entries/0024--10d9e.md) | Division-free Shoup-NTT (radix-4): every constant modular multiply (twiddles, p… |
 | 0025 | 2026-06-24 | @10d9e | 32106560 | -2671296 (new record) | `2729e7d` | [0025](history/entries/0025--10d9e.md) | Lazy Harvey-style Shoup butterflies (radix-4): keep values in [0,2p), twiddle multiplies use a lazy Shoup with no fina… |
 | 0026 | 2026-06-24 | @10d9e | 29231216 | -2875344 (new record) | `67c6a35` | [0026](history/entries/0026--10d9e.md) | Fuse the per-input reduction into the psi pre-weight: lazy Shoup accepts any u32 input, so a[j]*psi^j mod p is one ste… |
+| 0027 | 2026-06-24 | @10d9e | 29008896 | -222320 (new record) | `09ee130` | [0027](history/entries/0027--10d9e.md) | Montgomery pointwise product: carry the spectral domain in Montgomery form (R baked into psi, R^-1 into ipsi) so the po… |
