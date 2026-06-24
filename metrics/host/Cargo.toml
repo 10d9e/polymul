@@ -1,0 +1,12 @@
+[package]
+name = "polymul-fuel-meter"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "polymul-fuel-meter"
+path = "src/main.rs"
+
+[dependencies]
+wasmtime = { version = "26", default-features = false, features = ["cranelift", "runtime"] }

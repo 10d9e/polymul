@@ -1,0 +1,19 @@
+[package]
+name = "polymul-wasm-meter"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+name = "polymul_wasm_meter"
+path = "src/lib.rs"
+
+[dependencies]
+polymul = { path = "../.." }
+
+[profile.release]
+opt-level = 3
+panic = "abort"
+lto = true
+codegen-units = 1
