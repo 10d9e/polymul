@@ -424,8 +424,9 @@ pub fn poly_mul(plan: &mut Plan, a: &[u32; 1024], b: &[u32; 1024]) -> [u32; 1024
             // v1 = (r1 - v0) * inv(P0) mod P1.  v0 = r0[j] < P0 < P1, so v0 % P1 == v0.
             let t1 = (*r1.get_unchecked(j) + p1 - v0) % p1;
             let v1 = (t1 * inv01) % p1;
-            // w = (v0 + P0*v1) mod P2
-            let w = (v0 % p2 + p0_mod_p2 * v1 % p2) % p2;
+            // w = (v0 + P0*v1) mod P2.  v0 (< 2^30) plus (p0_mod_p2*v1 % p2) (< P2)
+            // sums to < 2^31, so the outer % p2 reduces it without pre-reducing v0.
+            let w = (v0 + p0_mod_p2 * v1 % p2) % p2;
             let t2 = (*r2.get_unchecked(j) + p2 - w) % p2;
             let v2 = (t2 * inv_m01) % p2;
 
