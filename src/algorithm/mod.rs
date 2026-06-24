@@ -199,13 +199,15 @@ unsafe fn r4_dif_q1(x: &mut [u64; N], i0: usize, i1: usize, i2: usize, i3: usize
 
     let u = x0 + x2;
     let v = x1 + x3;
-    let m02 = (x0 + p - x2) % p;
+    // m02 = x0 + p - x2 stays lazy in (0, 2p): ta = 1 here, so it is not a product
+    // and feeds only output `% p` reductions.
+    let m02 = x0 + p - x2;
     let m13 = ((x1 + p - x3) * tb) % p;
 
     *x.get_unchecked_mut(i0) = (u + v) % p;
     *x.get_unchecked_mut(i1) = (u + 2 * p - v) % p;
     *x.get_unchecked_mut(i2) = (m02 + m13) % p;
-    *x.get_unchecked_mut(i3) = (m02 + p - m13) % p;
+    *x.get_unchecked_mut(i3) = (m02 + 2 * p - m13) % p;
 }
 
 /// Forward NTT of both multiply operands in lockstep, using fused radix-4 passes
