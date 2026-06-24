@@ -119,10 +119,12 @@ fn build_tables(p: u64) -> PrimeTables {
     PrimeTables { p, psi, ipsi, tw, itw }
 }
 
-/// Forward NTT, decimation-in-frequency (Gentleman–Sande).
+/// Forward NTT (decimation-in-frequency, Gentleman–Sande) applied to two arrays
+/// in lockstep, sharing all index/loop/twiddle overhead between them (the two
+/// operands of a multiply are transformed identically).
 /// Natural-order input -> bit-reversed-order output.
 #[inline(always)]
-fn ntt_dif(a: &mut [u64; N], t: &PrimeTables) {
+fn ntt_dif2(a: &mut [u64; N], b: &mut [u64; N], t: &PrimeTables) {
     let p = t.p;
     let mut len = N / 2;
     while len >= 1 {
@@ -131,13 +133,25 @@ fn ntt_dif(a: &mut [u64; N], t: &PrimeTables) {
             let base = len;
             for j in 0..len {
                 unsafe {
-                    let u = *a.get_unchecked(start + j);
-                    let v = *a.get_unchecked(start + j + len);
-                    let s = u + v;
-                    *a.get_unchecked_mut(start + j) = if s >= p { s - p } else { s };
-                    let d = u + p - v;
-                    let d = if d >= p { d - p } else { d };
-                    *a.get_unchecked_mut(start + j + len) = (d * *t.tw.get_unchecked(base + j)) % p;
+                    let w = *t.tw.get_unchecked(base + j);
+                    let lo = start + j;
+                    let hi = lo + len;
+
+                    let ua = *a.get_unchecked(lo);
+                    let va = *a.get_unchecked(hi);
+                    let sa = ua + va;
+                    *a.get_unchecked_mut(lo) = if sa >= p { sa - p } else { sa };
+                    let da = ua + p - va;
+                    let da = if da >= p { da - p } else { da };
+                    *a.get_unchecked_mut(hi) = (da * w) % p;
+
+                    let ub = *b.get_unchecked(lo);
+                    let vb = *b.get_unchecked(hi);
+                    let sb = ub + vb;
+                    *b.get_unchecked_mut(lo) = if sb >= p { sb - p } else { sb };
+                    let db = ub + p - vb;
+                    let db = if db >= p { db - p } else { db };
+                    *b.get_unchecked_mut(hi) = (db * w) % p;
                 }
             }
             start += 2 * len;
@@ -185,8 +199,7 @@ fn convolve_mod(t: &PrimeTables, a: &[u32; N], b: &[u32; N]) -> [u64; N] {
             *fb.get_unchecked_mut(j) = (*b.get_unchecked(j) as u64 * psi) % p;
         }
     }
-    ntt_dif(&mut fa, t);
-    ntt_dif(&mut fb, t);
+    ntt_dif2(&mut fa, &mut fb, t);
     unsafe {
         for j in 0..N {
             *fa.get_unchecked_mut(j) = (*fa.get_unchecked(j) * *fb.get_unchecked(j)) % p;
