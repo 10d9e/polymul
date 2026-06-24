@@ -1,8 +1,13 @@
 {
   "repo": "10d9e/polymul",
-  "generatedAt": "2026-06-24T22:12:00Z",
+  "generatedAt": "2026-06-24T22:13:33Z",
   "baseline": 319558256,
   "baselines": [
+    {
+      "id": "record_0026",
+      "label": "record_0026",
+      "score": 29231216
+    },
     {
       "id": "record_0025",
       "label": "record_0025",
@@ -130,8 +135,8 @@
     }
   ],
   "record": {
-    "id": "0025",
-    "score": 32106560,
+    "id": "0026",
+    "score": 29231216,
     "author": "@10d9e"
   },
   "entries": [
@@ -152,7 +157,7 @@
       "iterationNotes": "",
       "algoChanges": "(none \u2014 starting point)",
       "evalSnapshot": "SCORE: 319558256 (deterministic wasm WORK; lower is better)",
-      "scoreRank": 25,
+      "scoreRank": 26,
       "isRecord": true,
       "isNonWinning": true
     },
@@ -173,7 +178,7 @@
       "iterationNotes": "Local SCORE 51690192 (6.18x vs baseline 319558256). All 7 correctness tests pass; only src/algorithm/ changed.",
       "algoChanges": "src/algorithm/mod.rs | 253 +++++++++++++++++++++++++++++++++++++++++++++++----\n 1 file changed, 235 insertions(+), 18 deletions(-)",
       "evalSnapshot": "pair         checksum  correct\npair_00      59792455  OK\npair_01     657232806  OK\npair_02    2605106666  OK\npair_03    1238090288  OK\npair_04    3537965698  OK\npair_05    4016801909  OK\npair_06    2504428456  OK\npair_07    3471918578  OK\npair_08    3749949333  OK\npair_09    3433047406  OK\npair_10    1330399805  OK\npair_11     416140958  OK\npair_12     756388848  OK\npair_13    3312552558  OK\npair_14    4003011182  OK\npair_15    2766084884  OK\npair_16     719557972  OK\npair_17    1195611096  OK\npair_18      93601654  OK\npair_19    3568687450  OK\npair_20     908794089  OK\npair_21    1854488580  OK\npair_22    2839907203  OK\npair_23    2123697322  OK\npair_24    2107085209  OK\npair_25    1937899796  OK\npair_26     545907364  OK\npair_27    3253554485  OK\npair_28    3314795850  OK\npair_29    3401697196  OK\npair_30    1925593101  OK\npair_31     238243502  OK\n----------------------------------------\n\nSCORE: 51690192 (deterministic wasm WORK; lower is better)",
-      "scoreRank": 24,
+      "scoreRank": 25,
       "isRecord": true,
       "isNonWinning": true
     },
@@ -194,7 +199,7 @@
       "iterationNotes": "",
       "algoChanges": "src/algorithm/mod.rs | 35 ++++++++++++++++++++++++-----------\n 1 file changed, 24 insertions(+), 11 deletions(-)",
       "evalSnapshot": "pair         checksum  correct\npair_00      59792455  OK\npair_01     657232806  OK\npair_02    2605106666  OK\npair_03    1238090288  OK\npair_04    3537965698  OK\npair_05    4016801909  OK\npair_06    2504428456  OK\npair_07    3471918578  OK\npair_08    3749949333  OK\npair_09    3433047406  OK\npair_10    1330399805  OK\npair_11     416140958  OK\npair_12     756388848  OK\npair_13    3312552558  OK\npair_14    4003011182  OK\npair_15    2766084884  OK\npair_16     719557972  OK\npair_17    1195611096  OK\npair_18      93601654  OK\npair_19    3568687450  OK\npair_20     908794089  OK\npair_21    1854488580  OK\npair_22    2839907203  OK\npair_23    2123697322  OK\npair_24    2107085209  OK\npair_25    1937899796  OK\npair_26     545907364  OK\npair_27    3253554485  OK\npair_28    3314795850  OK\npair_29    3401697196  OK\npair_30    1925593101  OK\npair_31     238243502  OK\n----------------------------------------\n\nSCORE: 50018256 (deterministic wasm WORK; lower is better)",
-      "scoreRank": 23,
+      "scoreRank": 24,
       "isRecord": true,
       "isNonWinning": true
     },
@@ -215,7 +220,7 @@
       "iterationNotes": "",
       "algoChanges": "src/algorithm/mod.rs | 112 ++++++++++++++++++++++++++++++++++-----------------\n 1 file changed, 75 insertions(+), 37 deletions(-)",
       "evalSnapshot": "pair         checksum  correct\npair_00      59792455  OK\npair_01     657232806  OK\npair_02    2605106666  OK\npair_03    1238090288  OK\npair_04    3537965698  OK\npair_05    4016801909  OK\npair_06    2504428456  OK\npair_07    3471918578  OK\npair_08    3749949333  OK\npair_09    3433047406  OK\npair_10    1330399805  OK\npair_11     416140958  OK\npair_12     756388848  OK\npair_13    3312552558  OK\npair_14    4003011182  OK\npair_15    2766084884  OK\npair_16     719557972  OK\npair_17    1195611096  OK\npair_18      93601654  OK\npair_19    3568687450  OK\npair_20     908794089  OK\npair_21    1854488580  OK\npair_22    2839907203  OK\npair_23    2123697322  OK\npair_24    2107085209  OK\npair_25    1937899796  OK\npair_26     545907364  OK\npair_27    3253554485  OK\npair_28    3314795850  OK\npair_29    3401697196  OK\npair_30    1925593101  OK\npair_31     238243502  OK\n----------------------------------------\n\nSCORE: 46689312 (deterministic wasm WORK; lower is better)",
-      "scoreRank": 21,
+      "scoreRank": 22,
       "isRecord": true,
       "isNonWinning": true
     },
@@ -236,7 +241,7 @@
       "iterationNotes": "",
       "algoChanges": "src/algorithm/mod.rs | 89 +++++++++++++++++++++++++++++++++-------------------\n 1 file changed, 57 insertions(+), 32 deletions(-)",
       "evalSnapshot": "pair         checksum  correct\npair_00      59792455  OK\npair_01     657232806  OK\npair_02    2605106666  OK\npair_03    1238090288  OK\npair_04    3537965698  OK\npair_05    4016801909  OK\npair_06    2504428456  OK\npair_07    3471918578  OK\npair_08    3749949333  OK\npair_09    3433047406  OK\npair_10    1330399805  OK\npair_11     416140958  OK\npair_12     756388848  OK\npair_13    3312552558  OK\npair_14    4003011182  OK\npair_15    2766084884  OK\npair_16     719557972  OK\npair_17    1195611096  OK\npair_18      93601654  OK\npair_19    3568687450  OK\npair_20     908794089  OK\npair_21    1854488580  OK\npair_22    2839907203  OK\npair_23    2123697322  OK\npair_24    2107085209  OK\npair_25    1937899796  OK\npair_26     545907364  OK\npair_27    3253554485  OK\npair_28    3314795850  OK\npair_29    3401697196  OK\npair_30    1925593101  OK\npair_31     238243502  OK\n----------------------------------------\n\nSCORE: 44764944 (deterministic wasm WORK; lower is better)",
-      "scoreRank": 17,
+      "scoreRank": 18,
       "isRecord": true,
       "isNonWinning": true
     },
@@ -257,7 +262,7 @@
       "iterationNotes": "",
       "algoChanges": "src/algorithm/mod.rs | 63 +++++++++++++++++++++++++++++++++++++++-------------\n 1 file changed, 48 insertions(+), 15 deletions(-)",
       "evalSnapshot": "pair         checksum  correct\npair_00      59792455  OK\npair_01     657232806  OK\npair_02    2605106666  OK\npair_03    1238090288  OK\npair_04    3537965698  OK\npair_05    4016801909  OK\npair_06    2504428456  OK\npair_07    3471918578  OK\npair_08    3749949333  OK\npair_09    3433047406  OK\npair_10    1330399805  OK\npair_11     416140958  OK\npair_12     756388848  OK\npair_13    3312552558  OK\npair_14    4003011182  OK\npair_15    2766084884  OK\npair_16     719557972  OK\npair_17    1195611096  OK\npair_18      93601654  OK\npair_19    3568687450  OK\npair_20     908794089  OK\npair_21    1854488580  OK\npair_22    2839907203  OK\npair_23    2123697322  OK\npair_24    2107085209  OK\npair_25    1937899796  OK\npair_26     545907364  OK\npair_27    3253554485  OK\npair_28    3314795850  OK\npair_29    3401697196  OK\npair_30    1925593101  OK\npair_31     238243502  OK\n----------------------------------------\n\nSCORE: 44099440 (deterministic wasm WORK; lower is better)",
-      "scoreRank": 16,
+      "scoreRank": 17,
       "isRecord": true,
       "isNonWinning": true
     },
@@ -278,7 +283,7 @@
       "iterationNotes": "",
       "algoChanges": "src/algorithm/mod.rs | 51 ++++++++++++++++++++++++++++++++++++++++-----------\n 1 file changed, 40 insertions(+), 11 deletions(-)",
       "evalSnapshot": "pair         checksum  correct\npair_00      59792455  OK\npair_01     657232806  OK\npair_02    2605106666  OK\npair_03    1238090288  OK\npair_04    3537965698  OK\npair_05    4016801909  OK\npair_06    2504428456  OK\npair_07    3471918578  OK\npair_08    3749949333  OK\npair_09    3433047406  OK\npair_10    1330399805  OK\npair_11     416140958  OK\npair_12     756388848  OK\npair_13    3312552558  OK\npair_14    4003011182  OK\npair_15    2766084884  OK\npair_16     719557972  OK\npair_17    1195611096  OK\npair_18      93601654  OK\npair_19    3568687450  OK\npair_20     908794089  OK\npair_21    1854488580  OK\npair_22    2839907203  OK\npair_23    2123697322  OK\npair_24    2107085209  OK\npair_25    1937899796  OK\npair_26     545907364  OK\npair_27    3253554485  OK\npair_28    3314795850  OK\npair_29    3401697196  OK\npair_30    1925593101  OK\npair_31     238243502  OK\n----------------------------------------\n\nSCORE: 43697392 (deterministic wasm WORK; lower is better)",
-      "scoreRank": 14,
+      "scoreRank": 15,
       "isRecord": true,
       "isNonWinning": true
     },
@@ -299,7 +304,7 @@
       "iterationNotes": "",
       "algoChanges": "src/algorithm/mod.rs | 47 +++++++++++++++++++++++++++++++++++++----------\n 1 file changed, 37 insertions(+), 10 deletions(-)",
       "evalSnapshot": "pair         checksum  correct\npair_00      59792455  OK\npair_01     657232806  OK\npair_02    2605106666  OK\npair_03    1238090288  OK\npair_04    3537965698  OK\npair_05    4016801909  OK\npair_06    2504428456  OK\npair_07    3471918578  OK\npair_08    3749949333  OK\npair_09    3433047406  OK\npair_10    1330399805  OK\npair_11     416140958  OK\npair_12     756388848  OK\npair_13    3312552558  OK\npair_14    4003011182  OK\npair_15    2766084884  OK\npair_16     719557972  OK\npair_17    1195611096  OK\npair_18      93601654  OK\npair_19    3568687450  OK\npair_20     908794089  OK\npair_21    1854488580  OK\npair_22    2839907203  OK\npair_23    2123697322  OK\npair_24    2107085209  OK\npair_25    1937899796  OK\npair_26     545907364  OK\npair_27    3253554485  OK\npair_28    3314795850  OK\npair_29    3401697196  OK\npair_30    1925593101  OK\npair_31     238243502  OK\n----------------------------------------\n\nSCORE: 42969328 (deterministic wasm WORK; lower is better)",
-      "scoreRank": 13,
+      "scoreRank": 14,
       "isRecord": true,
       "isNonWinning": true
     },
@@ -320,7 +325,7 @@
       "iterationNotes": "",
       "algoChanges": "src/algorithm/mod.rs | 4 ++--\n 1 file changed, 2 insertions(+), 2 deletions(-)",
       "evalSnapshot": "pair         checksum  correct\npair_00      59792455  OK\npair_01     657232806  OK\npair_02    2605106666  OK\npair_03    1238090288  OK\npair_04    3537965698  OK\npair_05    4016801909  OK\npair_06    2504428456  OK\npair_07    3471918578  OK\npair_08    3749949333  OK\npair_09    3433047406  OK\npair_10    1330399805  OK\npair_11     416140958  OK\npair_12     756388848  OK\npair_13    3312552558  OK\npair_14    4003011182  OK\npair_15    2766084884  OK\npair_16     719557972  OK\npair_17    1195611096  OK\npair_18      93601654  OK\npair_19    3568687450  OK\npair_20     908794089  OK\npair_21    1854488580  OK\npair_22    2839907203  OK\npair_23    2123697322  OK\npair_24    2107085209  OK\npair_25    1937899796  OK\npair_26     545907364  OK\npair_27    3253554485  OK\npair_28    3314795850  OK\npair_29    3401697196  OK\npair_30    1925593101  OK\npair_31     238243502  OK\n----------------------------------------\n\nSCORE: 42559728 (deterministic wasm WORK; lower is better)",
-      "scoreRank": 12,
+      "scoreRank": 13,
       "isRecord": true,
       "isNonWinning": true
     },
@@ -341,7 +346,7 @@
       "iterationNotes": "",
       "algoChanges": "src/algorithm/mod.rs | 23 +++++++++++------------\n 1 file changed, 11 insertions(+), 12 deletions(-)",
       "evalSnapshot": "pair         checksum  correct\npair_00      59792455  OK\npair_01     657232806  OK\npair_02    2605106666  OK\npair_03    1238090288  OK\npair_04    3537965698  OK\npair_05    4016801909  OK\npair_06    2504428456  OK\npair_07    3471918578  OK\npair_08    3749949333  OK\npair_09    3433047406  OK\npair_10    1330399805  OK\npair_11     416140958  OK\npair_12     756388848  OK\npair_13    3312552558  OK\npair_14    4003011182  OK\npair_15    2766084884  OK\npair_16     719557972  OK\npair_17    1195611096  OK\npair_18      93601654  OK\npair_19    3568687450  OK\npair_20     908794089  OK\npair_21    1854488580  OK\npair_22    2839907203  OK\npair_23    2123697322  OK\npair_24    2107085209  OK\npair_25    1937899796  OK\npair_26     545907364  OK\npair_27    3253554485  OK\npair_28    3314795850  OK\npair_29    3401697196  OK\npair_30    1925593101  OK\npair_31     238243502  OK\n----------------------------------------\n\nSCORE: 41085168 (deterministic wasm WORK; lower is better)",
-      "scoreRank": 9,
+      "scoreRank": 10,
       "isRecord": true,
       "isNonWinning": true
     },
@@ -362,7 +367,7 @@
       "iterationNotes": "",
       "algoChanges": "src/algorithm/mod.rs | 26 +++++++++++---------------\n 1 file changed, 11 insertions(+), 15 deletions(-)",
       "evalSnapshot": "pair         checksum  correct\npair_00      59792455  OK\npair_01     657232806  OK\npair_02    2605106666  OK\npair_03    1238090288  OK\npair_04    3537965698  OK\npair_05    4016801909  OK\npair_06    2504428456  OK\npair_07    3471918578  OK\npair_08    3749949333  OK\npair_09    3433047406  OK\npair_10    1330399805  OK\npair_11     416140958  OK\npair_12     756388848  OK\npair_13    3312552558  OK\npair_14    4003011182  OK\npair_15    2766084884  OK\npair_16     719557972  OK\npair_17    1195611096  OK\npair_18      93601654  OK\npair_19    3568687450  OK\npair_20     908794089  OK\npair_21    1854488580  OK\npair_22    2839907203  OK\npair_23    2123697322  OK\npair_24    2107085209  OK\npair_25    1937899796  OK\npair_26     545907364  OK\npair_27    3253554485  OK\npair_28    3314795850  OK\npair_29    3401697196  OK\npair_30    1925593101  OK\npair_31     238243502  OK\n----------------------------------------\n\nSCORE: 40737216 (deterministic wasm WORK; lower is better)",
-      "scoreRank": 7,
+      "scoreRank": 8,
       "isRecord": true,
       "isNonWinning": true
     },
@@ -383,7 +388,7 @@
       "iterationNotes": "",
       "algoChanges": "src/algorithm/mod.rs | 56 +++++++++++++++++++++++++++++++++++++---------------\n 1 file changed, 40 insertions(+), 16 deletions(-)",
       "evalSnapshot": "pair         checksum  correct\npair_00      59792455  OK\npair_01     657232806  OK\npair_02    2605106666  OK\npair_03    1238090288  OK\npair_04    3537965698  OK\npair_05    4016801909  OK\npair_06    2504428456  OK\npair_07    3471918578  OK\npair_08    3749949333  OK\npair_09    3433047406  OK\npair_10    1330399805  OK\npair_11     416140958  OK\npair_12     756388848  OK\npair_13    3312552558  OK\npair_14    4003011182  OK\npair_15    2766084884  OK\npair_16     719557972  OK\npair_17    1195611096  OK\npair_18      93601654  OK\npair_19    3568687450  OK\npair_20     908794089  OK\npair_21    1854488580  OK\npair_22    2839907203  OK\npair_23    2123697322  OK\npair_24    2107085209  OK\npair_25    1937899796  OK\npair_26     545907364  OK\npair_27    3253554485  OK\npair_28    3314795850  OK\npair_29    3401697196  OK\npair_30    1925593101  OK\npair_31     238243502  OK\n----------------------------------------\n\nSCORE: 39285792 (deterministic wasm WORK; lower is better)",
-      "scoreRank": 5,
+      "scoreRank": 6,
       "isRecord": true,
       "isNonWinning": true
     },
@@ -404,7 +409,7 @@
       "iterationNotes": "",
       "algoChanges": "src/algorithm/mod.rs | 5 +++--\n 1 file changed, 3 insertions(+), 2 deletions(-)",
       "evalSnapshot": "pair         checksum  correct\npair_00      59792455  OK\npair_01     657232806  OK\npair_02    2605106666  OK\npair_03    1238090288  OK\npair_04    3537965698  OK\npair_05    4016801909  OK\npair_06    2504428456  OK\npair_07    3471918578  OK\npair_08    3749949333  OK\npair_09    3433047406  OK\npair_10    1330399805  OK\npair_11     416140958  OK\npair_12     756388848  OK\npair_13    3312552558  OK\npair_14    4003011182  OK\npair_15    2766084884  OK\npair_16     719557972  OK\npair_17    1195611096  OK\npair_18      93601654  OK\npair_19    3568687450  OK\npair_20     908794089  OK\npair_21    1854488580  OK\npair_22    2839907203  OK\npair_23    2123697322  OK\npair_24    2107085209  OK\npair_25    1937899796  OK\npair_26     545907364  OK\npair_27    3253554485  OK\npair_28    3314795850  OK\npair_29    3401697196  OK\npair_30    1925593101  OK\npair_31     238243502  OK\n----------------------------------------\n\nSCORE: 39236640 (deterministic wasm WORK; lower is better)",
-      "scoreRank": 4,
+      "scoreRank": 5,
       "isRecord": true,
       "isNonWinning": true
     },
@@ -425,7 +430,7 @@
       "iterationNotes": "",
       "algoChanges": "src/algorithm/mod.rs | 29 ++++++++++++++---------------\n 1 file changed, 14 insertions(+), 15 deletions(-)",
       "evalSnapshot": "pair         checksum  correct\npair_00      59792455  OK\npair_01     657232806  OK\npair_02    2605106666  OK\npair_03    1238090288  OK\npair_04    3537965698  OK\npair_05    4016801909  OK\npair_06    2504428456  OK\npair_07    3471918578  OK\npair_08    3749949333  OK\npair_09    3433047406  OK\npair_10    1330399805  OK\npair_11     416140958  OK\npair_12     756388848  OK\npair_13    3312552558  OK\npair_14    4003011182  OK\npair_15    2766084884  OK\npair_16     719557972  OK\npair_17    1195611096  OK\npair_18      93601654  OK\npair_19    3568687450  OK\npair_20     908794089  OK\npair_21    1854488580  OK\npair_22    2839907203  OK\npair_23    2123697322  OK\npair_24    2107085209  OK\npair_25    1937899796  OK\npair_26     545907364  OK\npair_27    3253554485  OK\npair_28    3314795850  OK\npair_29    3401697196  OK\npair_30    1925593101  OK\npair_31     238243502  OK\n----------------------------------------\n\nSCORE: 41202768 (deterministic wasm WORK; lower is better)",
-      "scoreRank": 10,
+      "scoreRank": 11,
       "isRecord": false,
       "isNonWinning": true
     },
@@ -446,7 +451,7 @@
       "iterationNotes": "",
       "algoChanges": "src/algorithm/mod.rs | 51 ++++++++++++++++++++++++---------------------------\n 1 file changed, 24 insertions(+), 27 deletions(-)",
       "evalSnapshot": "pair         checksum  correct\npair_00      59792455  OK\npair_01     657232806  OK\npair_02    2605106666  OK\npair_03    1238090288  OK\npair_04    3537965698  OK\npair_05    4016801909  OK\npair_06    2504428456  OK\npair_07    3471918578  OK\npair_08    3749949333  OK\npair_09    3433047406  OK\npair_10    1330399805  OK\npair_11     416140958  OK\npair_12     756388848  OK\npair_13    3312552558  OK\npair_14    4003011182  OK\npair_15    2766084884  OK\npair_16     719557972  OK\npair_17    1195611096  OK\npair_18      93601654  OK\npair_19    3568687450  OK\npair_20     908794089  OK\npair_21    1854488580  OK\npair_22    2839907203  OK\npair_23    2123697322  OK\npair_24    2107085209  OK\npair_25    1937899796  OK\npair_26     545907364  OK\npair_27    3253554485  OK\npair_28    3314795850  OK\npair_29    3401697196  OK\npair_30    1925593101  OK\npair_31     238243502  OK\n----------------------------------------\n\nSCORE: 44975184 (deterministic wasm WORK; lower is better)",
-      "scoreRank": 18,
+      "scoreRank": 19,
       "isRecord": false,
       "isNonWinning": true
     },
@@ -467,7 +472,7 @@
       "iterationNotes": "",
       "algoChanges": "src/algorithm/mod.rs | 11 ++++++-----\n 1 file changed, 6 insertions(+), 5 deletions(-)",
       "evalSnapshot": "pair         checksum  correct\npair_00      59792455  OK\npair_01     657232806  OK\npair_02    2605106666  OK\npair_03    1238090288  OK\npair_04    3537965698  OK\npair_05    4016801909  OK\npair_06    2504428456  OK\npair_07    3471918578  OK\npair_08    3749949333  OK\npair_09    3433047406  OK\npair_10    1330399805  OK\npair_11     416140958  OK\npair_12     756388848  OK\npair_13    3312552558  OK\npair_14    4003011182  OK\npair_15    2766084884  OK\npair_16     719557972  OK\npair_17    1195611096  OK\npair_18      93601654  OK\npair_19    3568687450  OK\npair_20     908794089  OK\npair_21    1854488580  OK\npair_22    2839907203  OK\npair_23    2123697322  OK\npair_24    2107085209  OK\npair_25    1937899796  OK\npair_26     545907364  OK\npair_27    3253554485  OK\npair_28    3314795850  OK\npair_29    3401697196  OK\npair_30    1925593101  OK\npair_31     238243502  OK\n----------------------------------------\n\nSCORE: 47268944 (deterministic wasm WORK; lower is better)",
-      "scoreRank": 22,
+      "scoreRank": 23,
       "isRecord": false,
       "isNonWinning": true
     },
@@ -488,7 +493,7 @@
       "iterationNotes": "",
       "algoChanges": "src/algorithm/mod.rs | 8 ++++----\n 1 file changed, 4 insertions(+), 4 deletions(-)",
       "evalSnapshot": "pair         checksum  correct\npair_00      59792455  OK\npair_01     657232806  OK\npair_02    2605106666  OK\npair_03    1238090288  OK\npair_04    3537965698  OK\npair_05    4016801909  OK\npair_06    2504428456  OK\npair_07    3471918578  OK\npair_08    3749949333  OK\npair_09    3433047406  OK\npair_10    1330399805  OK\npair_11     416140958  OK\npair_12     756388848  OK\npair_13    3312552558  OK\npair_14    4003011182  OK\npair_15    2766084884  OK\npair_16     719557972  OK\npair_17    1195611096  OK\npair_18      93601654  OK\npair_19    3568687450  OK\npair_20     908794089  OK\npair_21    1854488580  OK\npair_22    2839907203  OK\npair_23    2123697322  OK\npair_24    2107085209  OK\npair_25    1937899796  OK\npair_26     545907364  OK\npair_27    3253554485  OK\npair_28    3314795850  OK\npair_29    3401697196  OK\npair_30    1925593101  OK\npair_31     238243502  OK\n----------------------------------------\n\nSCORE: 46449744 (deterministic wasm WORK; lower is better)",
-      "scoreRank": 20,
+      "scoreRank": 21,
       "isRecord": false,
       "isNonWinning": true
     },
@@ -509,7 +514,7 @@
       "iterationNotes": "",
       "algoChanges": "src/algorithm/mod.rs | 6 ++++--\n 1 file changed, 4 insertions(+), 2 deletions(-)",
       "evalSnapshot": "pair         checksum  correct\npair_00      59792455  OK\npair_01     657232806  OK\npair_02    2605106666  OK\npair_03    1238090288  OK\npair_04    3537965698  OK\npair_05    4016801909  OK\npair_06    2504428456  OK\npair_07    3471918578  OK\npair_08    3749949333  OK\npair_09    3433047406  OK\npair_10    1330399805  OK\npair_11     416140958  OK\npair_12     756388848  OK\npair_13    3312552558  OK\npair_14    4003011182  OK\npair_15    2766084884  OK\npair_16     719557972  OK\npair_17    1195611096  OK\npair_18      93601654  OK\npair_19    3568687450  OK\npair_20     908794089  OK\npair_21    1854488580  OK\npair_22    2839907203  OK\npair_23    2123697322  OK\npair_24    2107085209  OK\npair_25    1937899796  OK\npair_26     545907364  OK\npair_27    3253554485  OK\npair_28    3314795850  OK\npair_29    3401697196  OK\npair_30    1925593101  OK\npair_31     238243502  OK\n----------------------------------------\n\nSCORE: 45835344 (deterministic wasm WORK; lower is better)",
-      "scoreRank": 19,
+      "scoreRank": 20,
       "isRecord": false,
       "isNonWinning": true
     },
@@ -530,7 +535,7 @@
       "iterationNotes": "",
       "algoChanges": "src/algorithm/mod.rs | 224 ++++++++++++++++++++++++++++++++++++++++++---------\n 1 file changed, 184 insertions(+), 40 deletions(-)",
       "evalSnapshot": "pair         checksum  correct\npair_00      59792455  OK\npair_01     657232806  OK\npair_02    2605106666  OK\npair_03    1238090288  OK\npair_04    3537965698  OK\npair_05    4016801909  OK\npair_06    2504428456  OK\npair_07    3471918578  OK\npair_08    3749949333  OK\npair_09    3433047406  OK\npair_10    1330399805  OK\npair_11     416140958  OK\npair_12     756388848  OK\npair_13    3312552558  OK\npair_14    4003011182  OK\npair_15    2766084884  OK\npair_16     719557972  OK\npair_17    1195611096  OK\npair_18      93601654  OK\npair_19    3568687450  OK\npair_20     908794089  OK\npair_21    1854488580  OK\npair_22    2839907203  OK\npair_23    2123697322  OK\npair_24    2107085209  OK\npair_25    1937899796  OK\npair_26     545907364  OK\npair_27    3253554485  OK\npair_28    3314795850  OK\npair_29    3401697196  OK\npair_30    1925593101  OK\npair_31     238243502  OK\n----------------------------------------\n\nSCORE: 43871616 (deterministic wasm WORK; lower is better)",
-      "scoreRank": 15,
+      "scoreRank": 16,
       "isRecord": false,
       "isNonWinning": true
     },
@@ -551,7 +556,7 @@
       "iterationNotes": "",
       "algoChanges": "src/algorithm/mod.rs | 283 ++++++++++++++++++++++++++++++++++++++++++---------\n 1 file changed, 233 insertions(+), 50 deletions(-)",
       "evalSnapshot": "pair         checksum  correct\npair_00      59792455  OK\npair_01     657232806  OK\npair_02    2605106666  OK\npair_03    1238090288  OK\npair_04    3537965698  OK\npair_05    4016801909  OK\npair_06    2504428456  OK\npair_07    3471918578  OK\npair_08    3749949333  OK\npair_09    3433047406  OK\npair_10    1330399805  OK\npair_11     416140958  OK\npair_12     756388848  OK\npair_13    3312552558  OK\npair_14    4003011182  OK\npair_15    2766084884  OK\npair_16     719557972  OK\npair_17    1195611096  OK\npair_18      93601654  OK\npair_19    3568687450  OK\npair_20     908794089  OK\npair_21    1854488580  OK\npair_22    2839907203  OK\npair_23    2123697322  OK\npair_24    2107085209  OK\npair_25    1937899796  OK\npair_26     545907364  OK\npair_27    3253554485  OK\npair_28    3314795850  OK\npair_29    3401697196  OK\npair_30    1925593101  OK\npair_31     238243502  OK\n----------------------------------------\n\nSCORE: 42196224 (deterministic wasm WORK; lower is better)",
-      "scoreRank": 11,
+      "scoreRank": 12,
       "isRecord": false,
       "isNonWinning": true
     },
@@ -572,7 +577,7 @@
       "iterationNotes": "",
       "algoChanges": "src/algorithm/mod.rs | 171 ++++++++++++++++++++++-----------------------------\n 1 file changed, 72 insertions(+), 99 deletions(-)",
       "evalSnapshot": "pair         checksum  correct\npair_00      59792455  OK\npair_01     657232806  OK\npair_02    2605106666  OK\npair_03    1238090288  OK\npair_04    3537965698  OK\npair_05    4016801909  OK\npair_06    2504428456  OK\npair_07    3471918578  OK\npair_08    3749949333  OK\npair_09    3433047406  OK\npair_10    1330399805  OK\npair_11     416140958  OK\npair_12     756388848  OK\npair_13    3312552558  OK\npair_14    4003011182  OK\npair_15    2766084884  OK\npair_16     719557972  OK\npair_17    1195611096  OK\npair_18      93601654  OK\npair_19    3568687450  OK\npair_20     908794089  OK\npair_21    1854488580  OK\npair_22    2839907203  OK\npair_23    2123697322  OK\npair_24    2107085209  OK\npair_25    1937899796  OK\npair_26     545907364  OK\npair_27    3253554485  OK\npair_28    3314795850  OK\npair_29    3401697196  OK\npair_30    1925593101  OK\npair_31     238243502  OK\n----------------------------------------\n\nSCORE: 41081712 (deterministic wasm WORK; lower is better)",
-      "scoreRank": 8,
+      "scoreRank": 9,
       "isRecord": false,
       "isNonWinning": true
     },
@@ -593,7 +598,7 @@
       "iterationNotes": "",
       "algoChanges": "src/algorithm/mod.rs | 156 ++++++++++++++++++++-------------------------------\n 1 file changed, 60 insertions(+), 96 deletions(-)",
       "evalSnapshot": "pair         checksum  correct\npair_00      59792455  OK\npair_01     657232806  OK\npair_02    2605106666  OK\npair_03    1238090288  OK\npair_04    3537965698  OK\npair_05    4016801909  OK\npair_06    2504428456  OK\npair_07    3471918578  OK\npair_08    3749949333  OK\npair_09    3433047406  OK\npair_10    1330399805  OK\npair_11     416140958  OK\npair_12     756388848  OK\npair_13    3312552558  OK\npair_14    4003011182  OK\npair_15    2766084884  OK\npair_16     719557972  OK\npair_17    1195611096  OK\npair_18      93601654  OK\npair_19    3568687450  OK\npair_20     908794089  OK\npair_21    1854488580  OK\npair_22    2839907203  OK\npair_23    2123697322  OK\npair_24    2107085209  OK\npair_25    1937899796  OK\npair_26     545907364  OK\npair_27    3253554485  OK\npair_28    3314795850  OK\npair_29    3401697196  OK\npair_30    1925593101  OK\npair_31     238243502  OK\n----------------------------------------\n\nSCORE: 40565136 (deterministic wasm WORK; lower is better)",
-      "scoreRank": 6,
+      "scoreRank": 7,
       "isRecord": false,
       "isNonWinning": true
     },
@@ -614,7 +619,7 @@
       "iterationNotes": "",
       "algoChanges": "src/algorithm/mod.rs | 20 +++++++++++++++++---\n 1 file changed, 17 insertions(+), 3 deletions(-)",
       "evalSnapshot": "pair         checksum  correct\npair_00      59792455  OK\npair_01     657232806  OK\npair_02    2605106666  OK\npair_03    1238090288  OK\npair_04    3537965698  OK\npair_05    4016801909  OK\npair_06    2504428456  OK\npair_07    3471918578  OK\npair_08    3749949333  OK\npair_09    3433047406  OK\npair_10    1330399805  OK\npair_11     416140958  OK\npair_12     756388848  OK\npair_13    3312552558  OK\npair_14    4003011182  OK\npair_15    2766084884  OK\npair_16     719557972  OK\npair_17    1195611096  OK\npair_18      93601654  OK\npair_19    3568687450  OK\npair_20     908794089  OK\npair_21    1854488580  OK\npair_22    2839907203  OK\npair_23    2123697322  OK\npair_24    2107085209  OK\npair_25    1937899796  OK\npair_26     545907364  OK\npair_27    3253554485  OK\npair_28    3314795850  OK\npair_29    3401697196  OK\npair_30    1925593101  OK\npair_31     238243502  OK\n----------------------------------------\n\nSCORE: 37923024 (deterministic wasm WORK; lower is better)",
-      "scoreRank": 3,
+      "scoreRank": 4,
       "isRecord": true,
       "isNonWinning": true
     },
@@ -635,7 +640,7 @@
       "iterationNotes": "Local SCORE 34777856 (9.19x vs baseline 319558256), -8.3% vs the prior record\n37923024. All 7 correctness tests pass; only src/algorithm/ changed. Remaining\nheadroom toward the projected ~21M: a register-fused radix-16 (3 memory passes\ninstead of radix-4's 5) and SIMD (wasm v128 ALU ops are 1 fuel each), both of\nwhich the division-free Shoup kernel is now well-suited to.",
       "algoChanges": "src/algorithm/mod.rs | 804 +++++++++++++++------------------------------------",
       "evalSnapshot": "pair         checksum  correct\npair_00      59792455  OK\npair_01     657232806  OK\npair_02    2605106666  OK\npair_03    1238090288  OK\npair_04    3537965698  OK\npair_05    4016801909  OK\npair_06    2504428456  OK\npair_07    3471918578  OK\n...\nSCORE: 34777856 (deterministic wasm WORK; lower is better)",
-      "scoreRank": 2,
+      "scoreRank": 3,
       "isRecord": true,
       "isNonWinning": true
     },
@@ -656,6 +661,27 @@
       "iterationNotes": "Local SCORE 32106560 (9.95x vs baseline 319558256), -7.7% vs the prior record 34777856. Next: division-free input reduction and Montgomery pointwise to remove the last %p sites. All 7 correctness tests pass; only src/algorithm/ changed.",
       "algoChanges": "src/algorithm/mod.rs | 89 +++++++++++++++++++++++++++++++++-------------------",
       "evalSnapshot": "pair         checksum  correct\npair_00      59792455  OK\npair_01     657232806  OK\npair_02    2605106666  OK\npair_03    1238090288  OK\npair_04    3537965698  OK\npair_05    4016801909  OK\npair_06    2504428456  OK\n...\nSCORE: 32106560 (deterministic wasm WORK; lower is better)",
+      "scoreRank": 2,
+      "isRecord": true,
+      "isNonWinning": true
+    },
+    {
+      "id": "0026",
+      "date": "2026-06-24",
+      "author": "@10d9e",
+      "model": "opus 4.8",
+      "score": 29231216,
+      "delta": "-2875344 (new record)",
+      "deltaValue": null,
+      "commit": "67c6a35",
+      "commitFull": "`67c6a35` (67c6a35e65eaece5ae9d541bb8eae24d22e5048e)",
+      "status": "record",
+      "entryPath": "history/entries/0026--10d9e.md",
+      "note": "Eliminate the per-input coefficient reduction. The forward transform previously\ndid `a[j] % p` before the negacyclic psi pre-weight. But `shoup_lazy` is valid\nfor any operand `< 2^32`, so the raw u32 coefficient can be fed straight in:\n`shoup_lazy(a[j], psi^j, ...)` computes `a[j]*psi^j mod p` in `[0,2p)` directly,\nfolding the reduction into the multiply that was happening anyway. Removes one\n`% p` (the most expensive op, weight 25) per input coefficient across all six\nforward transforms \u2014 with identical outputs.",
+      "approach": "Eliminate the per-input coefficient reduction. The forward transform previously\ndid `a[j] % p` before the negacyclic psi pre-weight. But `shoup_lazy` is valid\nfor any operand `< 2^32`, so the raw u32 coefficient can be fed straight in:\n`shoup_lazy(a[j], psi^j, ...)` computes `a[j]*psi^j mod p` in `[0,2p)` directly,\nfolding the reduction into the multiply that was happening anyway. Removes one\n`% p` (the most expensive op, weight 25) per input coefficient across all six\nforward transforms \u2014 with identical outputs.",
+      "iterationNotes": "Local SCORE 29231216 (10.93x vs baseline 319558256), -9.0% vs the prior record 32106560. Last %p in the hot path is now the spectral pointwise product; Montgomery is next. All 7 correctness tests pass; only src/algorithm/ changed.",
+      "algoChanges": "src/algorithm/mod.rs | 7 +++++--",
+      "evalSnapshot": "pair         checksum  correct\npair_00      59792455  OK\npair_01     657232806  OK\npair_02    2605106666  OK\npair_03    1238090288  OK\npair_04    3537965698  OK\npair_05    4016801909  OK\npair_06    2504428456  OK\n...\nSCORE: 29231216 (deterministic wasm WORK; lower is better)",
       "scoreRank": 1,
       "isRecord": true,
       "isNonWinning": false
