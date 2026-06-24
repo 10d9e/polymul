@@ -41,8 +41,12 @@ struct PrimeTables {
     p: u64,
     psi: [u64; N],  // psi^j           (pre-weight)
     ipsi: [u64; N], // psi^{-j} * N^-1 (post-weight, folds inverse-transform scale)
-    tw: [u64; N],   // forward (DIF) twiddles: tw[len + j] = w_N^{j * N/(2*len)}
     itw: [u64; N],  // inverse (DIT) twiddles: itw[len + j] = w_N^{-(j * N/(2*len))}
+    // Forward radix-4 (two fused DIF stages) twiddles, indexed [q + j] where q is
+    // the quarter-block size. ta = w_{4q}^j, tb = ta*w_4, tc = ta^2.
+    ta: [u64; N],
+    tb: [u64; N],
+    tc: [u64; N],
 }
 
 /// Opaque plan holding precomputed tables (built once in `plan_new`, free).
@@ -97,66 +101,100 @@ fn build_tables(p: u64) -> PrimeTables {
         iacc = (iacc as u128 * psi_inv as u128 % p as u128) as u64;
     }
 
-    // Stage twiddles, indexed [len + j] where len is the butterfly half-size.
-    let mut tw = [0u64; N];
+    // Inverse radix-2 DIT stage twiddles, indexed [len + j], len = half-size.
     let mut itw = [0u64; N];
     let mut len = 1usize;
     while len < N {
-        let step = (N / (2 * len)) as u64; // w_{2*len} = w_N^step
-        let wr = modpow(w_root, step, p);
+        let step = (N / (2 * len)) as u64;
         let wir = modpow(wi_root, step, p);
-        let mut wj = 1u64;
         let mut wij = 1u64;
         for j in 0..len {
-            tw[len + j] = wj;
             itw[len + j] = wij;
-            wj = (wj as u128 * wr as u128 % p as u128) as u64;
             wij = (wij as u128 * wir as u128 % p as u128) as u64;
         }
         len <<= 1;
     }
 
-    PrimeTables { p, psi, ipsi, tw, itw }
+    // Forward radix-4 twiddles: each fused pass combines two radix-2 DIF stages,
+    // processing quarter-blocks of size q for q in {N/4, N/16, ..., 1}.
+    let i4 = modpow(w_root, (N / 4) as u64, p); // w_4 = primitive 4th root
+    let mut ta = [0u64; N];
+    let mut tb = [0u64; N];
+    let mut tc = [0u64; N];
+    let mut q = N / 4;
+    loop {
+        let wr = modpow(w_root, (N / (4 * q)) as u64, p); // w_{4q}
+        let mut a_j = 1u64; // w_{4q}^j
+        for j in 0..q {
+            ta[q + j] = a_j;
+            tb[q + j] = (a_j as u128 * i4 as u128 % p as u128) as u64;
+            tc[q + j] = (a_j as u128 * a_j as u128 % p as u128) as u64;
+            a_j = (a_j as u128 * wr as u128 % p as u128) as u64;
+        }
+        if q == 1 {
+            break;
+        }
+        q >>= 2;
+    }
+
+    PrimeTables { p, psi, ipsi, itw, ta, tb, tc }
 }
 
-/// Forward NTT (decimation-in-frequency, Gentleman–Sande) applied to two arrays
-/// in lockstep, sharing all index/loop/twiddle overhead between them (the two
-/// operands of a multiply are transformed identically).
+/// One fused radix-4 DIF butterfly (two combined radix-2 DIF stages) on the four
+/// values held at indices i0,i1,i2,i3 of `x`, using twiddles ta,tb,tc.
+/// Equivalent to two consecutive radix-2 Gentleman–Sande stages, so the overall
+/// permutation remains base-2 bit reversal.
+#[inline(always)]
+unsafe fn r4_dif(x: &mut [u64; N], i0: usize, i1: usize, i2: usize, i3: usize,
+                 ta: u64, tb: u64, tc: u64, p: u64) {
+    let x0 = *x.get_unchecked(i0);
+    let x1 = *x.get_unchecked(i1);
+    let x2 = *x.get_unchecked(i2);
+    let x3 = *x.get_unchecked(i3);
+
+    let s02 = { let s = x0 + x2; if s >= p { s - p } else { s } };
+    let s13 = { let s = x1 + x3; if s >= p { s - p } else { s } };
+    let d02 = { let d = x0 + p - x2; if d >= p { d - p } else { d } };
+    let d13 = { let d = x1 + p - x3; if d >= p { d - p } else { d } };
+    let m02 = (d02 * ta) % p;
+    let m13 = (d13 * tb) % p;
+
+    *x.get_unchecked_mut(i0) = { let s = s02 + s13; if s >= p { s - p } else { s } };
+    *x.get_unchecked_mut(i1) = ({ let d = s02 + p - s13; if d >= p { d - p } else { d } } * tc) % p;
+    *x.get_unchecked_mut(i2) = { let s = m02 + m13; if s >= p { s - p } else { s } };
+    *x.get_unchecked_mut(i3) = ({ let d = m02 + p - m13; if d >= p { d - p } else { d } } * tc) % p;
+}
+
+/// Forward NTT applied to two arrays in lockstep, using fused radix-4 passes
+/// (5 passes instead of 10) to halve memory traffic; shares twiddle loads
+/// between the two operands of the multiply.
 /// Natural-order input -> bit-reversed-order output.
 #[inline(always)]
 fn ntt_dif2(a: &mut [u64; N], b: &mut [u64; N], t: &PrimeTables) {
     let p = t.p;
-    let mut len = N / 2;
-    while len >= 1 {
+    let mut q = N / 4;
+    loop {
         let mut start = 0usize;
         while start < N {
-            let base = len;
-            for j in 0..len {
+            for j in 0..q {
                 unsafe {
-                    let w = *t.tw.get_unchecked(base + j);
-                    let lo = start + j;
-                    let hi = lo + len;
-
-                    let ua = *a.get_unchecked(lo);
-                    let va = *a.get_unchecked(hi);
-                    let sa = ua + va;
-                    *a.get_unchecked_mut(lo) = if sa >= p { sa - p } else { sa };
-                    let da = ua + p - va;
-                    let da = if da >= p { da - p } else { da };
-                    *a.get_unchecked_mut(hi) = (da * w) % p;
-
-                    let ub = *b.get_unchecked(lo);
-                    let vb = *b.get_unchecked(hi);
-                    let sb = ub + vb;
-                    *b.get_unchecked_mut(lo) = if sb >= p { sb - p } else { sb };
-                    let db = ub + p - vb;
-                    let db = if db >= p { db - p } else { db };
-                    *b.get_unchecked_mut(hi) = (db * w) % p;
+                    let ta = *t.ta.get_unchecked(q + j);
+                    let tb = *t.tb.get_unchecked(q + j);
+                    let tc = *t.tc.get_unchecked(q + j);
+                    let i0 = start + j;
+                    let i1 = i0 + q;
+                    let i2 = i1 + q;
+                    let i3 = i2 + q;
+                    r4_dif(a, i0, i1, i2, i3, ta, tb, tc, p);
+                    r4_dif(b, i0, i1, i2, i3, ta, tb, tc, p);
                 }
             }
-            start += 2 * len;
+            start += 4 * q;
         }
-        len >>= 1;
+        if q == 1 {
+            break;
+        }
+        q >>= 2;
     }
 }
 
