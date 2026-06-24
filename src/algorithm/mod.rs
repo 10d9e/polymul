@@ -46,6 +46,16 @@ struct PrimeTables {
     ta: [u64; N],
     tb: [u64; N],
     tc: [u64; N],
+    // Forward radix-8 (three fused DIF stages) twiddles, indexed [q8 + j] where q8
+    // is the eighth-block size. ra{0..3} = w_{8q}^{j + k*q}, rb0 = w_{4q}^j,
+    // rb1 = w_{4q}^{j+q}, rc0 = w_{2q}^j.
+    ra0: [u64; N],
+    ra1: [u64; N],
+    ra2: [u64; N],
+    ra3: [u64; N],
+    rb0: [u64; N],
+    rb1: [u64; N],
+    rc0: [u64; N],
     // Inverse radix-4 (two fused DIT stages) twiddles, indexed [q + j].
     // ita = w_{4q}^{-j}, itb = w_{4q}^{-(j+q)}, itc = w_{2q}^{-j} = ita^2.
     ita: [u64; N],
@@ -137,7 +147,48 @@ fn build_tables(p: u64) -> PrimeTables {
         q >>= 2;
     }
 
-    PrimeTables { p, psi, ipsi, ta, tb, tc, ita, itb, itc }
+    // Forward radix-8 twiddles for the first two passes (q8 = N/8, N/64).
+    let mut ra0 = [0u64; N];
+    let mut ra1 = [0u64; N];
+    let mut ra2 = [0u64; N];
+    let mut ra3 = [0u64; N];
+    let mut rb0 = [0u64; N];
+    let mut rb1 = [0u64; N];
+    let mut rc0 = [0u64; N];
+    let mut q8 = N / 8;
+    loop {
+        let w8 = modpow(w_root, (N / (8 * q8)) as u64, p);
+        let w4 = modpow(w_root, (N / (4 * q8)) as u64, p);
+        let w2 = modpow(w_root, (N / (2 * q8)) as u64, p);
+        let w8q1 = modpow(w8, q8 as u64, p); // w8^{q8}
+        let w8q2 = modpow(w8, (2 * q8) as u64, p);
+        let w8q3 = modpow(w8, (3 * q8) as u64, p);
+        let w4q1 = modpow(w4, q8 as u64, p); // w4^{q8}
+        let mut a = 1u64; // w8^j
+        let mut b = 1u64; // w4^j
+        let mut c = 1u64; // w2^j
+        for j in 0..q8 {
+            ra0[q8 + j] = a;
+            ra1[q8 + j] = (a as u128 * w8q1 as u128 % p as u128) as u64;
+            ra2[q8 + j] = (a as u128 * w8q2 as u128 % p as u128) as u64;
+            ra3[q8 + j] = (a as u128 * w8q3 as u128 % p as u128) as u64;
+            rb0[q8 + j] = b;
+            rb1[q8 + j] = (b as u128 * w4q1 as u128 % p as u128) as u64;
+            rc0[q8 + j] = c;
+            a = (a as u128 * w8 as u128 % p as u128) as u64;
+            b = (b as u128 * w4 as u128 % p as u128) as u64;
+            c = (c as u128 * w2 as u128 % p as u128) as u64;
+        }
+        if q8 == N / 64 {
+            break;
+        }
+        q8 /= 8;
+    }
+
+    PrimeTables {
+        p, psi, ipsi, ta, tb, tc, ita, itb, itc,
+        ra0, ra1, ra2, ra3, rb0, rb1, rc0,
+    }
 }
 
 /// One fused radix-4 DIF butterfly (two combined radix-2 DIF stages) on the four
@@ -165,29 +216,6 @@ unsafe fn r4_dif(x: &mut [u64; N], i0: usize, i1: usize, i2: usize, i3: usize,
     *x.get_unchecked_mut(i3) = ((m02 + p - m13) * tc) % p;
 }
 
-/// First fused radix-4 DIF butterfly that also applies the negacyclic pre-weight
-/// psi^i on the fly, reading the raw u32 input and writing the u64 transform
-/// buffer. Folds the separate pre-weight pass into the first forward pass.
-#[inline(always)]
-unsafe fn r4_dif_pre(src: &[u32; N], psi: &[u64; N], dst: &mut [u64; N],
-                     i0: usize, i1: usize, i2: usize, i3: usize,
-                     ta: u64, tb: u64, tc: u64, p: u64) {
-    let x0 = (*src.get_unchecked(i0) as u64 * *psi.get_unchecked(i0)) % p;
-    let x1 = (*src.get_unchecked(i1) as u64 * *psi.get_unchecked(i1)) % p;
-    let x2 = (*src.get_unchecked(i2) as u64 * *psi.get_unchecked(i2)) % p;
-    let x3 = (*src.get_unchecked(i3) as u64 * *psi.get_unchecked(i3)) % p;
-
-    let u = x0 + x2;
-    let v = x1 + x3;
-    let m02 = ((x0 + p - x2) * ta) % p;
-    let m13 = ((x1 + p - x3) * tb) % p;
-
-    *dst.get_unchecked_mut(i0) = (u + v) % p;
-    *dst.get_unchecked_mut(i1) = ((u + 2 * p - v) * tc) % p;
-    *dst.get_unchecked_mut(i2) = (m02 + m13) % p;
-    *dst.get_unchecked_mut(i3) = ((m02 + p - m13) * tc) % p;
-}
-
 /// Forward radix-4 butterfly for the last pass (q = 1), where ta = tc = 1 so
 /// those multiplies vanish (only tb = w_4 remains).
 #[inline(always)]
@@ -210,29 +238,145 @@ unsafe fn r4_dif_q1(x: &mut [u64; N], i0: usize, i1: usize, i2: usize, i3: usize
     *x.get_unchecked_mut(i3) = (m02 + 2 * p - m13) % p;
 }
 
-/// Forward NTT of both multiply operands in lockstep, using fused radix-4 passes
-/// (5 passes instead of 10). The negacyclic pre-weight psi^i is folded into the
-/// first pass, so the raw u32 inputs are consumed directly into the u64 buffers.
+/// Reduce the eight radix-8 DIF outputs (three fused radix-2 DIF stages) of the
+/// values x0..x7 into the eight destination slots. `wr` reads x via the supplied
+/// closure-free expressions; the lazy bounds match the comments.
+macro_rules! r8_body {
+    ($x0:expr,$x1:expr,$x2:expr,$x3:expr,$x4:expr,$x5:expr,$x6:expr,$x7:expr,
+     $dst:expr,$i0:expr,$i1:expr,$i2:expr,$i3:expr,$i4:expr,$i5:expr,$i6:expr,$i7:expr,
+     $ra0:expr,$ra1:expr,$ra2:expr,$ra3:expr,$rb0:expr,$rb1:expr,$rc0:expr,$p:expr) => {{
+        let p = $p;
+        // stage 1 (L = 4q): sums lazy in [0,2p), diffs reduced.
+        let y0 = $x0 + $x4;
+        let y1 = $x1 + $x5;
+        let y2 = $x2 + $x6;
+        let y3 = $x3 + $x7;
+        let y4 = (($x0 + p - $x4) * $ra0) % p;
+        let y5 = (($x1 + p - $x5) * $ra1) % p;
+        let y6 = (($x2 + p - $x6) * $ra2) % p;
+        let y7 = (($x3 + p - $x7) * $ra3) % p;
+        // stage 2 (L = 2q).
+        let z0 = y0 + y2;           // [0,4p)
+        let z1 = y1 + y3;           // [0,4p)
+        let z2 = ((y0 + 2 * p - y2) * $rb0) % p;
+        let z3 = ((y1 + 2 * p - y3) * $rb1) % p;
+        let z4 = y4 + y6;           // [0,2p)
+        let z5 = y5 + y7;           // [0,2p)
+        let z6 = ((y4 + p - y6) * $rb0) % p;
+        let z7 = ((y5 + p - y7) * $rb1) % p;
+        // stage 3 (L = q): write natural-positioned outputs.
+        *$dst.get_unchecked_mut($i0) = (z0 + z1) % p;
+        *$dst.get_unchecked_mut($i1) = ((z0 + 4 * p - z1) * $rc0) % p;
+        *$dst.get_unchecked_mut($i2) = (z2 + z3) % p;
+        *$dst.get_unchecked_mut($i3) = ((z2 + p - z3) * $rc0) % p;
+        *$dst.get_unchecked_mut($i4) = (z4 + z5) % p;
+        *$dst.get_unchecked_mut($i5) = ((z4 + 2 * p - z5) * $rc0) % p;
+        *$dst.get_unchecked_mut($i6) = (z6 + z7) % p;
+        *$dst.get_unchecked_mut($i7) = ((z6 + p - z7) * $rc0) % p;
+    }};
+}
+
+/// Fused radix-8 DIF butterfly (three combined radix-2 DIF stages) in place.
+#[inline(always)]
+#[allow(clippy::too_many_arguments)]
+unsafe fn r8_dif(x: &mut [u64; N], i0: usize, i1: usize, i2: usize, i3: usize,
+                 i4: usize, i5: usize, i6: usize, i7: usize,
+                 ra0: u64, ra1: u64, ra2: u64, ra3: u64, rb0: u64, rb1: u64, rc0: u64, p: u64) {
+    let x0 = *x.get_unchecked(i0);
+    let x1 = *x.get_unchecked(i1);
+    let x2 = *x.get_unchecked(i2);
+    let x3 = *x.get_unchecked(i3);
+    let x4 = *x.get_unchecked(i4);
+    let x5 = *x.get_unchecked(i5);
+    let x6 = *x.get_unchecked(i6);
+    let x7 = *x.get_unchecked(i7);
+    r8_body!(x0, x1, x2, x3, x4, x5, x6, x7, x, i0, i1, i2, i3, i4, i5, i6, i7,
+             ra0, ra1, ra2, ra3, rb0, rb1, rc0, p);
+}
+
+/// Fused radix-8 DIF butterfly that folds in the psi pre-weight, reading raw u32
+/// input and writing the u64 buffer.
+#[inline(always)]
+#[allow(clippy::too_many_arguments)]
+unsafe fn r8_dif_pre(src: &[u32; N], psi: &[u64; N], dst: &mut [u64; N],
+                     i0: usize, i1: usize, i2: usize, i3: usize,
+                     i4: usize, i5: usize, i6: usize, i7: usize,
+                     ra0: u64, ra1: u64, ra2: u64, ra3: u64, rb0: u64, rb1: u64, rc0: u64, p: u64) {
+    let x0 = (*src.get_unchecked(i0) as u64 * *psi.get_unchecked(i0)) % p;
+    let x1 = (*src.get_unchecked(i1) as u64 * *psi.get_unchecked(i1)) % p;
+    let x2 = (*src.get_unchecked(i2) as u64 * *psi.get_unchecked(i2)) % p;
+    let x3 = (*src.get_unchecked(i3) as u64 * *psi.get_unchecked(i3)) % p;
+    let x4 = (*src.get_unchecked(i4) as u64 * *psi.get_unchecked(i4)) % p;
+    let x5 = (*src.get_unchecked(i5) as u64 * *psi.get_unchecked(i5)) % p;
+    let x6 = (*src.get_unchecked(i6) as u64 * *psi.get_unchecked(i6)) % p;
+    let x7 = (*src.get_unchecked(i7) as u64 * *psi.get_unchecked(i7)) % p;
+    r8_body!(x0, x1, x2, x3, x4, x5, x6, x7, dst, i0, i1, i2, i3, i4, i5, i6, i7,
+             ra0, ra1, ra2, ra3, rb0, rb1, rc0, p);
+}
+
+/// Forward NTT of both multiply operands in lockstep. Uses two fused radix-8
+/// passes (the first folding in the psi pre-weight) followed by two fused radix-4
+/// passes: 4 memory passes covering all 10 radix-2 stages. The butterfly network
+/// is unchanged, so the output is in base-2 bit-reversed order.
 /// Natural-order input -> bit-reversed-order output.
 #[inline(always)]
 fn ntt_dif2(a: &[u32; N], b: &[u32; N], fa: &mut [u64; N], fb: &mut [u64; N], t: &PrimeTables) {
     let p = t.p;
-    // First pass (q = N/4, single block) folds in the psi pre-weight.
-    let q0 = N / 4;
-    for j in 0..q0 {
+    // Pass 1: radix-8 with psi pre-weight (q8 = N/8, single block).
+    let q8 = N / 8;
+    for j in 0..q8 {
         unsafe {
-            let ta = *t.ta.get_unchecked(q0 + j);
-            let tb = *t.tb.get_unchecked(q0 + j);
-            let tc = *t.tc.get_unchecked(q0 + j);
-            let i1 = j + q0;
-            let i2 = i1 + q0;
-            let i3 = i2 + q0;
-            r4_dif_pre(a, &t.psi, fa, j, i1, i2, i3, ta, tb, tc, p);
-            r4_dif_pre(b, &t.psi, fb, j, i1, i2, i3, ta, tb, tc, p);
+            let ra0 = *t.ra0.get_unchecked(q8 + j);
+            let ra1 = *t.ra1.get_unchecked(q8 + j);
+            let ra2 = *t.ra2.get_unchecked(q8 + j);
+            let ra3 = *t.ra3.get_unchecked(q8 + j);
+            let rb0 = *t.rb0.get_unchecked(q8 + j);
+            let rb1 = *t.rb1.get_unchecked(q8 + j);
+            let rc0 = *t.rc0.get_unchecked(q8 + j);
+            let i1 = j + q8;
+            let i2 = i1 + q8;
+            let i3 = i2 + q8;
+            let i4 = i3 + q8;
+            let i5 = i4 + q8;
+            let i6 = i5 + q8;
+            let i7 = i6 + q8;
+            r8_dif_pre(a, &t.psi, fa, j, i1, i2, i3, i4, i5, i6, i7,
+                       ra0, ra1, ra2, ra3, rb0, rb1, rc0, p);
+            r8_dif_pre(b, &t.psi, fb, j, i1, i2, i3, i4, i5, i6, i7,
+                       ra0, ra1, ra2, ra3, rb0, rb1, rc0, p);
         }
     }
-    // Middle passes (q = N/16, ..., 4) operate in place on the u64 buffers.
-    let mut q = q0 >> 2;
+    // Pass 2: radix-8 (q8 = N/64).
+    let q8 = N / 64;
+    let mut start = 0usize;
+    while start < N {
+        for j in 0..q8 {
+            unsafe {
+                let ra0 = *t.ra0.get_unchecked(q8 + j);
+                let ra1 = *t.ra1.get_unchecked(q8 + j);
+                let ra2 = *t.ra2.get_unchecked(q8 + j);
+                let ra3 = *t.ra3.get_unchecked(q8 + j);
+                let rb0 = *t.rb0.get_unchecked(q8 + j);
+                let rb1 = *t.rb1.get_unchecked(q8 + j);
+                let rc0 = *t.rc0.get_unchecked(q8 + j);
+                let i0 = start + j;
+                let i1 = i0 + q8;
+                let i2 = i1 + q8;
+                let i3 = i2 + q8;
+                let i4 = i3 + q8;
+                let i5 = i4 + q8;
+                let i6 = i5 + q8;
+                let i7 = i6 + q8;
+                r8_dif(fa, i0, i1, i2, i3, i4, i5, i6, i7,
+                       ra0, ra1, ra2, ra3, rb0, rb1, rc0, p);
+                r8_dif(fb, i0, i1, i2, i3, i4, i5, i6, i7,
+                       ra0, ra1, ra2, ra3, rb0, rb1, rc0, p);
+            }
+        }
+        start += 8 * q8;
+    }
+    // Passes 3 (q = 4) operate in place on the u64 buffers.
+    let mut q = N / 256;
     while q > 1 {
         let mut start = 0usize;
         while start < N {
