@@ -3,7 +3,7 @@
 Leaderboard of recorded submissions. Full narratives live in
 [`history/entries/`](history/entries/).
 
-**Current record: 21021584** (@10d9e, entry 0018)
+**Current record: 19700960** (@10d9e, entry 0019)
 
 | # | date | author | SCORE | Δ vs record | commit | entry | note |
 |---|------|--------|-------|-------------|--------|-------|------|
@@ -25,3 +25,4 @@ Leaderboard of recorded submissions. Full narratives live in
 | 0016 | 2026-06-24 | @10d9e | 21136272 | -770048 (new record) | `17de8f7` | [0016](history/entries/0016--10d9e.md) | Two cleanups. (1) The remaining conditional subtraction on the forward butterfly… |
 | 0017 | 2026-06-24 | @10d9e | 21070736 | -65536 (new record) | `e607afa` | [0017](history/entries/0017--10d9e.md) | Two more Garner intermediates that feed only a subsequent modular multiply are k… |
 | 0018 | 2026-06-24 | @10d9e | 21021584 | -49152 (new record) | `b376732` | [0018](history/entries/0018--10d9e.md) | In the q=1 forward butterfly ta=1, so m02 = x0 + p - x2 is a plain difference (n… |
+| 0019 | 2026-06-24 | @10d9e | 19700960 | -1320624 (new record) | `8c49ff3` | [0019](history/entries/0019--10d9e.md) | Regroup the 10 radix-2 forward stages as 3+3+2+2 instead of 2+2+2+2+2: two fused… |
