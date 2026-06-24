@@ -340,27 +340,62 @@ fn dif4_last16(x: &mut [u64; N], w: &[u32; N], ws: &[u32; N], ic: u32, ics: u32,
     }
 }
 
-/// Forward radix-4 DIF on the two multiply operands in lockstep, sharing the
-/// stage twiddle loads and index arithmetic. The last two stages (which act on
-/// contiguous 16-element blocks) are fused into a single register pass.
+/// Forward radix-4 DIF of both operands in lockstep. The psi negacyclic pre-weight
+/// is folded into the first stage's load (raw a[j],b[j] are weighted on the way in,
+/// no standalone pre-weight pass), and the last two stages (contiguous 16-element
+/// blocks) are fused into a single register pass.
+#[allow(clippy::too_many_arguments)]
 #[inline(always)]
-fn dif4_2(xa: &mut [u64; N], xb: &mut [u64; N], w: &[u32; N], ws: &[u32; N], ic: u32, ics: u32, p: u64) {
-    let mut len = N / 4;
+fn dif4_2(
+    a: &[u32; N], b: &[u32; N], xa: &mut [u64; N], xb: &mut [u64; N], psi: &[u32; N], psis: &[u32; N],
+    w: &[u32; N], ws: &[u32; N], ic: u32, ics: u32, p: u64,
+) {
+    let p2 = p << 1;
+    // First stage (half-block N/4) with the psi pre-weight folded into the load.
+    let len0 = N / 4;
+    let mut j = 0;
+    while j < len0 {
+        unsafe {
+            let e = j; // step = 1
+            let (t1c, t1s, t2c, t2s, t3c, t3s) = twiddles3(w, ws, e);
+            let pw = |src: &[u32; N], idx: usize| {
+                shoup_lazy(*src.get_unchecked(idx) as u64, *psi.get_unchecked(idx), *psis.get_unchecked(idx), p)
+            };
+            let (y0, y1, y2, y3) = r4_lazy(
+                pw(a, j), pw(a, j + len0), pw(a, j + 2 * len0), pw(a, j + 3 * len0), p, p2, ic, ics,
+                e == 0, t1c, t1s, t2c, t2s, t3c, t3s,
+            );
+            *xa.get_unchecked_mut(j) = y0;
+            *xa.get_unchecked_mut(j + len0) = y1;
+            *xa.get_unchecked_mut(j + 2 * len0) = y2;
+            *xa.get_unchecked_mut(j + 3 * len0) = y3;
+            let (z0, z1, z2, z3) = r4_lazy(
+                pw(b, j), pw(b, j + len0), pw(b, j + 2 * len0), pw(b, j + 3 * len0), p, p2, ic, ics,
+                e == 0, t1c, t1s, t2c, t2s, t3c, t3s,
+            );
+            *xb.get_unchecked_mut(j) = z0;
+            *xb.get_unchecked_mut(j + len0) = z1;
+            *xb.get_unchecked_mut(j + 2 * len0) = z2;
+            *xb.get_unchecked_mut(j + 3 * len0) = z3;
+        }
+        j += 1;
+    }
+    // Remaining strided stages (half-blocks 64, 16) on xa, xb.
+    let mut len = N / 16;
     while len >= 16 {
         let step = N / (4 * len);
-        let p2 = p << 1;
         let mut i = 0;
         while i < N {
             let mut e = 0usize;
-            let mut j = 0;
-            while j < len {
+            let mut jj = 0;
+            while jj < len {
                 unsafe {
                     let (t1c, t1s, t2c, t2s, t3c, t3s) = twiddles3(w, ws, e);
-                    r4_bfly(xa, i, j, len, p, p2, ic, ics, e, t1c, t1s, t2c, t2s, t3c, t3s);
-                    r4_bfly(xb, i, j, len, p, p2, ic, ics, e, t1c, t1s, t2c, t2s, t3c, t3s);
+                    r4_bfly(xa, i, jj, len, p, p2, ic, ics, e, t1c, t1s, t2c, t2s, t3c, t3s);
+                    r4_bfly(xb, i, jj, len, p, p2, ic, ics, e, t1c, t1s, t2c, t2s, t3c, t3s);
                 }
                 e += step;
-                j += 1;
+                jj += 1;
             }
             i += 4 * len;
         }
@@ -540,21 +575,14 @@ fn dit4(
     }
 }
 
-/// Forward transform of both multiply operands together (shared twiddle loads).
+/// Forward transform of both multiply operands together (shared twiddle loads;
+/// psi pre-weight folded into the first DIF stage).
 #[inline(always)]
 fn fwd2(a: &[u32; N], b: &[u32; N], t: &PrimeTables) -> ([u64; N], [u64; N]) {
     let p = t.p;
     let mut xa = [0u64; N];
     let mut xb = [0u64; N];
-    unsafe {
-        for j in 0..N {
-            let psi = *t.psi.get_unchecked(j);
-            let psis = *t.psis.get_unchecked(j);
-            *xa.get_unchecked_mut(j) = shoup_lazy(*a.get_unchecked(j) as u64, psi, psis, p);
-            *xb.get_unchecked_mut(j) = shoup_lazy(*b.get_unchecked(j) as u64, psi, psis, p);
-        }
-    }
-    dif4_2(&mut xa, &mut xb, &t.w, &t.ws, t.w[N / 4], t.ws[N / 4], p);
+    dif4_2(a, b, &mut xa, &mut xb, &t.psi, &t.psis, &t.w, &t.ws, t.w[N / 4], t.ws[N / 4], p);
     (xa, xb)
 }
 
