@@ -77,7 +77,15 @@ Everything else, including:
 - `Cargo.toml`      (no new dependencies — std-only Rust in algorithm)
 - `AUTORESEARCH.md`
 
-The boundary is enforced by `scripts/guard.sh`: only `src/algorithm/` may change.
+The boundary is enforced by `scripts/guard.sh` (local) and `scripts/guard-pr.sh`
+(CI): only `src/algorithm/` may change in a submission.
+
+**CI score gate.** Pull requests to `main` run `.github/workflows/score-gate.yml`.
+If `src/algorithm/` changed, the candidate must produce a **strictly lower**
+SCORE than the current record in `fixtures/baselines.tsv`. Otherwise the check
+fails and the change cannot land (enable branch protection on **Score gate**).
+Do not commit `fixtures/baselines.tsv` — CI appends new records after a winning
+merge.
 
 ## Anti-cheat rules
 

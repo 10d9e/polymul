@@ -56,3 +56,11 @@ calls — matching TFHE usage.
 Edit only `src/algorithm/`, run `bash scripts/evaluate.sh`, keep changes that
 lower **SCORE** (deterministic WORK) while all correctness tests pass. Details
 in [`AUTORESEARCH.md`](AUTORESEARCH.md) and [`AGENTS.md`](AGENTS.md).
+
+## CI
+
+Pull requests to `main` that change `src/algorithm/` must **beat the current
+record** in `fixtures/baselines.tsv` (lower SCORE is better). The **Score gate**
+workflow runs correctness tests, wasm fuel metering, and fails if the candidate
+does not improve on the record. Winning merges append the new SCORE to
+`fixtures/baselines.tsv` automatically.
