@@ -3,7 +3,7 @@
 Leaderboard of recorded submissions. Full narratives live in
 [`history/entries/`](history/entries/).
 
-**Current record: 24215232** (@10d9e, entry 0031)
+**Current record: 23663280** (@10d9e, entry 0032)
 
 | # | date | author | SCORE | Δ vs record | commit | entry | note |
 |---|------|--------|-------|-------------|--------|-------|------|
@@ -38,3 +38,4 @@ Leaderboard of recorded submissions. Full narratives live in
 | 0029 | 2026-06-24 | @10d9e | 25487616 | -1151232 (new record) | `5af0981` | [0029](history/entries/0029--10d9e.md) | Fuse last two forward DIF stages into a radix-16 register pass The last two radi… |
 | 0030 | 2026-06-24 | @10d9e | 24654528 | -833088 (new record) | `2c1bc5b` | [0030](history/entries/0030--10d9e.md) | Fuse first two inverse DIT stages into a radix-16 register pass Mirror of the fo… |
 | 0031 | 2026-06-24 | @10d9e | 24215232 | -439296 (new record) | `5bee2a3` | [0031](history/entries/0031--10d9e.md) | Fold the spectral pointwise product into the inverse transform The Montgomery po… |
+| 0032 | 2026-06-24 | @10d9e | 23663280 | -551952 (new record) | `8cff969` | [0032](history/entries/0032--10d9e.md) | Fold the psi inverse post-weight into the last DIT stage The final inverse DIT s… |
