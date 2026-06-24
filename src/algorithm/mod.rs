@@ -229,7 +229,7 @@ unsafe fn r4_bfly(
     let s0 = red2p(a + c, p);
     let s2 = red2p(b + d, p);
     let s1 = red2p(a + p2 - c, p);
-    let s3 = red2p(b + p2 - d, p);
+    let s3 = b + p2 - d; // in [0,4p); feeds only the lazy Shoup, which tolerates < 2^32
     let is3 = shoup_lazy(s3, ic, ics, p); // I * (b - d), in [0,2p)
     let y0 = red2p(s0 + s2, p);
     let y2 = s0 + p2 - s2; // [0,4p)
@@ -258,7 +258,7 @@ fn r4_lazy(
     let s0 = red2p(a + c, p);
     let s2 = red2p(b + d, p);
     let s1 = red2p(a + p2 - c, p);
-    let s3 = red2p(b + p2 - d, p);
+    let s3 = b + p2 - d; // in [0,4p); feeds only the lazy Shoup, which tolerates < 2^32
     let is3 = shoup_lazy(s3, ic, ics, p);
     let y0 = red2p(s0 + s2, p);
     let y2 = s0 + p2 - s2;
@@ -439,7 +439,7 @@ fn r4_lazy_dit(
     let s0 = red2p(a + c, p);
     let s1 = red2p(a + p2 - c, p);
     let s2 = red2p(b + d, p);
-    let s3 = red2p(b + p2 - d, p);
+    let s3 = b + p2 - d; // in [0,4p); feeds only the lazy Shoup, which tolerates < 2^32
     let js3 = shoup_lazy(s3, jc, jcs, p);
     (
         red2p(s0 + s2, p),
@@ -536,7 +536,7 @@ fn dit4(
                     let s0 = red2p(a + c, p);
                     let s1 = red2p(a + p2 - c, p);
                     let s2 = red2p(b + d, p);
-                    let s3 = red2p(b + p2 - d, p);
+                    let s3 = b + p2 - d; // in [0,4p); feeds only the lazy Shoup, which tolerates < 2^32
                     let js3 = shoup_lazy(s3, jc, jcs, p); // J * (b - d), in [0,2p)
                     *x.get_unchecked_mut(i + j) = red2p(s0 + s2, p);
                     *x.get_unchecked_mut(i + j + 2 * len) = red2p(s0 + p2 - s2, p);
