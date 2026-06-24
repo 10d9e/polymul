@@ -3,7 +3,7 @@
 Leaderboard of recorded submissions. Full narratives live in
 [`history/entries/`](history/entries/).
 
-**Current record: 29008896** (@10d9e, entry 0027)
+**Current record: 26638848** (@10d9e, entry 0028)
 
 | # | date | author | SCORE | Δ vs record | commit | entry | note |
 |---|------|--------|-------|-------------|--------|-------|------|
@@ -34,3 +34,4 @@ Leaderboard of recorded submissions. Full narratives live in
 | 0025 | 2026-06-24 | @10d9e | 32106560 | -2671296 (new record) | `2729e7d` | [0025](history/entries/0025--10d9e.md) | Lazy Harvey-style Shoup butterflies (radix-4): keep values in [0,2p), twiddle multiplies use a lazy Shoup with no fina… |
 | 0026 | 2026-06-24 | @10d9e | 29231216 | -2875344 (new record) | `67c6a35` | [0026](history/entries/0026--10d9e.md) | Fuse the per-input reduction into the psi pre-weight: lazy Shoup accepts any u32 input, so a[j]*psi^j mod p is one ste… |
 | 0027 | 2026-06-24 | @10d9e | 29008896 | -222320 (new record) | `09ee130` | [0027](history/entries/0027--10d9e.md) | Montgomery pointwise product: carry the spectral domain in Montgomery form (R baked into psi, R^-1 into ipsi) so the po… |
+| 0028 | 2026-06-24 | @10d9e | 26638848 | -2370048 (new record) | `5b7f75d` | [0028](history/entries/0028--10d9e.md) | Fuse the two forward transforms (a and b) into one lockstep radix-4 DIF so the stage twiddle loads and index arithm… |
