@@ -152,16 +152,15 @@ unsafe fn r4_dif(x: &mut [u64; N], i0: usize, i1: usize, i2: usize, i3: usize,
     let x2 = *x.get_unchecked(i2);
     let x3 = *x.get_unchecked(i3);
 
-    // s02, s13, m02, m13 are kept in [0, p). The diff terms (x0+p-x2 etc.) stay
-    // in (0, 2p) and feed only a `* twiddle % p`, whose product fits u64 and is
-    // fully reduced — so they need no separate conditional subtraction.
-    let s02 = { let s = x0 + x2; if s >= p { s - p } else { s } };
-    let s13 = { let s = x1 + x3; if s >= p { s - p } else { s } };
+    // u = x0+x2 and v = x1+x3 stay lazily in [0, 2p): they feed only the final
+    // `% p` (i0) and a `* tc % p` (i1), which reduce fully on their own.
+    let u = x0 + x2;
+    let v = x1 + x3;
     let m02 = ((x0 + p - x2) * ta) % p;
     let m13 = ((x1 + p - x3) * tb) % p;
 
-    *x.get_unchecked_mut(i0) = { let s = s02 + s13; if s >= p { s - p } else { s } };
-    *x.get_unchecked_mut(i1) = ((s02 + p - s13) * tc) % p;
+    *x.get_unchecked_mut(i0) = (u + v) % p;
+    *x.get_unchecked_mut(i1) = ((u + 2 * p - v) * tc) % p;
     *x.get_unchecked_mut(i2) = { let s = m02 + m13; if s >= p { s - p } else { s } };
     *x.get_unchecked_mut(i3) = ((m02 + p - m13) * tc) % p;
 }
@@ -178,13 +177,13 @@ unsafe fn r4_dif_pre(src: &[u32; N], psi: &[u64; N], dst: &mut [u64; N],
     let x2 = (*src.get_unchecked(i2) as u64 * *psi.get_unchecked(i2)) % p;
     let x3 = (*src.get_unchecked(i3) as u64 * *psi.get_unchecked(i3)) % p;
 
-    let s02 = { let s = x0 + x2; if s >= p { s - p } else { s } };
-    let s13 = { let s = x1 + x3; if s >= p { s - p } else { s } };
+    let u = x0 + x2;
+    let v = x1 + x3;
     let m02 = ((x0 + p - x2) * ta) % p;
     let m13 = ((x1 + p - x3) * tb) % p;
 
-    *dst.get_unchecked_mut(i0) = { let s = s02 + s13; if s >= p { s - p } else { s } };
-    *dst.get_unchecked_mut(i1) = ((s02 + p - s13) * tc) % p;
+    *dst.get_unchecked_mut(i0) = (u + v) % p;
+    *dst.get_unchecked_mut(i1) = ((u + 2 * p - v) * tc) % p;
     *dst.get_unchecked_mut(i2) = { let s = m02 + m13; if s >= p { s - p } else { s } };
     *dst.get_unchecked_mut(i3) = ((m02 + p - m13) * tc) % p;
 }
@@ -198,13 +197,13 @@ unsafe fn r4_dif_q1(x: &mut [u64; N], i0: usize, i1: usize, i2: usize, i3: usize
     let x2 = *x.get_unchecked(i2);
     let x3 = *x.get_unchecked(i3);
 
-    let s02 = { let s = x0 + x2; if s >= p { s - p } else { s } };
-    let s13 = { let s = x1 + x3; if s >= p { s - p } else { s } };
+    let u = x0 + x2;
+    let v = x1 + x3;
     let m02 = (x0 + p - x2) % p;
     let m13 = ((x1 + p - x3) * tb) % p;
 
-    *x.get_unchecked_mut(i0) = { let s = s02 + s13; if s >= p { s - p } else { s } };
-    *x.get_unchecked_mut(i1) = (s02 + p - s13) % p;
+    *x.get_unchecked_mut(i0) = (u + v) % p;
+    *x.get_unchecked_mut(i1) = (u + 2 * p - v) % p;
     *x.get_unchecked_mut(i2) = { let s = m02 + m13; if s >= p { s - p } else { s } };
     *x.get_unchecked_mut(i3) = (m02 + p - m13) % p;
 }
