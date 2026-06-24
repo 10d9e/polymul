@@ -247,12 +247,106 @@ unsafe fn r4_bfly(
     }
 }
 
+/// One radix-4 DIF butterfly on four values (lazy: in [0,2p), out [0,2p)).
+/// `triv` skips the (unit) stage twiddles.
+#[allow(clippy::too_many_arguments)]
+#[inline(always)]
+fn r4_lazy(
+    a: u64, b: u64, c: u64, d: u64, p: u64, p2: u64, ic: u32, ics: u32, triv: bool,
+    t1c: u32, t1s: u32, t2c: u32, t2s: u32, t3c: u32, t3s: u32,
+) -> (u64, u64, u64, u64) {
+    let s0 = red2p(a + c, p);
+    let s2 = red2p(b + d, p);
+    let s1 = red2p(a + p2 - c, p);
+    let s3 = red2p(b + p2 - d, p);
+    let is3 = shoup_lazy(s3, ic, ics, p);
+    let y0 = red2p(s0 + s2, p);
+    let y2 = s0 + p2 - s2;
+    let y1 = s1 + is3;
+    let y3 = s1 + p2 - is3;
+    if triv {
+        (y0, red2p(y1, p), red2p(y2, p), red2p(y3, p))
+    } else {
+        (
+            y0,
+            shoup_lazy(y1, t1c, t1s, p),
+            shoup_lazy(y2, t2c, t2s, p),
+            shoup_lazy(y3, t3c, t3s, p),
+        )
+    }
+}
+
+/// Fused last two forward DIF stages (half-block sizes 4 then 1) on one contiguous
+/// 16-element tile held in registers — one memory pass instead of two. The first
+/// fused stage uses 16th-root twiddles w^{64*g} (already in the `w` table); the
+/// second is all trivial.
+#[inline(always)]
+fn dif4_last16(x: &mut [u64; N], w: &[u32; N], ws: &[u32; N], ic: u32, ics: u32, p: u64) {
+    let p2 = p << 1;
+    let mut i = 0;
+    while i < N {
+        let mut t = [0u64; 16];
+        unsafe {
+            for k in 0..16 {
+                *t.get_unchecked_mut(k) = *x.get_unchecked(i + k);
+            }
+            // half-block size 4: groups (g, g+4, g+8, g+12), twiddle exponent e = 64*g.
+            for g in 0..4 {
+                let e = 64 * g;
+                let (a, b, c, d) = (
+                    *t.get_unchecked(g),
+                    *t.get_unchecked(g + 4),
+                    *t.get_unchecked(g + 8),
+                    *t.get_unchecked(g + 12),
+                );
+                let (t1c, t1s, t2c, t2s, t3c, t3s) = twiddles3(w, ws, e);
+                let (y0, y1, y2, y3) =
+                    r4_lazy(a, b, c, d, p, p2, ic, ics, e == 0, t1c, t1s, t2c, t2s, t3c, t3s);
+                *t.get_unchecked_mut(g) = y0;
+                *t.get_unchecked_mut(g + 4) = y1;
+                *t.get_unchecked_mut(g + 8) = y2;
+                *t.get_unchecked_mut(g + 12) = y3;
+            }
+            // half-block size 1: groups (4h, 4h+1, 4h+2, 4h+3), all trivial twiddles.
+            for h in 0..4 {
+                let b4 = 4 * h;
+                let (y0, y1, y2, y3) = r4_lazy(
+                    *t.get_unchecked(b4),
+                    *t.get_unchecked(b4 + 1),
+                    *t.get_unchecked(b4 + 2),
+                    *t.get_unchecked(b4 + 3),
+                    p,
+                    p2,
+                    ic,
+                    ics,
+                    true,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                );
+                *t.get_unchecked_mut(b4) = y0;
+                *t.get_unchecked_mut(b4 + 1) = y1;
+                *t.get_unchecked_mut(b4 + 2) = y2;
+                *t.get_unchecked_mut(b4 + 3) = y3;
+            }
+            for k in 0..16 {
+                *x.get_unchecked_mut(i + k) = *t.get_unchecked(k);
+            }
+        }
+        i += 16;
+    }
+}
+
 /// Forward radix-4 DIF on the two multiply operands in lockstep, sharing the
-/// stage twiddle loads and index arithmetic across both arrays.
+/// stage twiddle loads and index arithmetic. The last two stages (which act on
+/// contiguous 16-element blocks) are fused into a single register pass.
 #[inline(always)]
 fn dif4_2(xa: &mut [u64; N], xb: &mut [u64; N], w: &[u32; N], ws: &[u32; N], ic: u32, ics: u32, p: u64) {
     let mut len = N / 4;
-    while len >= 1 {
+    while len >= 16 {
         let step = N / (4 * len);
         let p2 = p << 1;
         let mut i = 0;
@@ -272,6 +366,8 @@ fn dif4_2(xa: &mut [u64; N], xb: &mut [u64; N], w: &[u32; N], ws: &[u32; N], ic:
         }
         len >>= 2;
     }
+    dif4_last16(xa, w, ws, ic, ics, p);
+    dif4_last16(xb, w, ws, ic, ics, p);
 }
 
 /// Load the three stage twiddles (w^e, w^{2e}, w^{3e}) and their Shoup constants.
