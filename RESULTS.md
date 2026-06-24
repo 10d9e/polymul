@@ -3,7 +3,7 @@
 Leaderboard of recorded submissions. Full narratives live in
 [`history/entries/`](history/entries/).
 
-**Current record: 18883808** (@10d9e, entry 0020)
+**Current record: 17824592** (@10d9e, entry 0021)
 
 | # | date | author | SCORE | Δ vs record | commit | entry | note |
 |---|------|--------|-------|-------------|--------|-------|------|
@@ -27,3 +27,4 @@ Leaderboard of recorded submissions. Full narratives live in
 | 0018 | 2026-06-24 | @10d9e | 21021584 | -49152 (new record) | `b376732` | [0018](history/entries/0018--10d9e.md) | In the q=1 forward butterfly ta=1, so m02 = x0 + p - x2 is a plain difference (n… |
 | 0019 | 2026-06-24 | @10d9e | 19700960 | -1320624 (new record) | `8c49ff3` | [0019](history/entries/0019--10d9e.md) | Regroup the 10 radix-2 forward stages as 3+3+2+2 instead of 2+2+2+2+2: two fused… |
 | 0020 | 2026-06-24 | @10d9e | 18883808 | -817152 (new record) | `6efef57` | [0020](history/entries/0020--10d9e.md) | Mirror the radix-8 forward on the inverse: regroup the 10 radix-2 DIT stages as … |
+| 0021 | 2026-06-24 | @10d9e | 17824592 | -1059216 (new record) | `7515355` | [0021](history/entries/0021--10d9e.md) | Fuse the forward NTT's last two radix-4 passes (stages L=8,4 and L=2,1) into a s… |
