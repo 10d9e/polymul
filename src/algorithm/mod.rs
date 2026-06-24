@@ -287,9 +287,12 @@ fn fwd(a: &[u32; N], t: &PrimeTables) -> [u64; N] {
     let p = t.p;
     let mut x = [0u64; N];
     unsafe {
+        // Fuse the per-input reduction into the psi pre-weight: lazy Shoup accepts
+        // any x < 2^32, so the raw (unreduced) coefficient a[j] can be multiplied
+        // by psi^j directly, yielding a[j]*psi^j mod p in [0,2p) with no `%`.
         for j in 0..N {
-            let aj = *a.get_unchecked(j) as u64 % p;
-            *x.get_unchecked_mut(j) = shoup(aj, *t.psi.get_unchecked(j), *t.psis.get_unchecked(j), p);
+            *x.get_unchecked_mut(j) =
+                shoup_lazy(*a.get_unchecked(j) as u64, *t.psi.get_unchecked(j), *t.psis.get_unchecked(j), p);
         }
     }
     // I = w^{N/4} lives at index N/4 of the forward twiddle table.
