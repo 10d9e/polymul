@@ -421,10 +421,10 @@ pub fn poly_mul(plan: &mut Plan, a: &[u32; 1024], b: &[u32; 1024]) -> [u32; 1024
             // and t1 = r1 + p1 - v0 < 2*P1 feeds only `* inv01 % p1`, so it stays lazy.
             let t1 = *r1.get_unchecked(j) + p1 - v0;
             let v1 = (t1 * inv01) % p1;
-            // w = (v0 + P0*v1) mod P2.  v0 (< 2^30) plus (p0_mod_p2*v1 % p2) (< P2)
-            // sums to < 2^31, so the outer % p2 reduces it without pre-reducing v0.
-            let w = (v0 + p0_mod_p2 * v1 % p2) % p2;
-            let t2 = (*r2.get_unchecked(j) + p2 - w) % p2;
+            // w = v0 + (p0_mod_p2*v1 % p2) stays lazy in [0, P0+P2) < 3*P2; t2 =
+            // r2 + 3*P2 - w stays lazy in (0, 4*P2) and feeds only `* inv_m01 % p2`.
+            let w = v0 + p0_mod_p2 * v1 % p2;
+            let t2 = *r2.get_unchecked(j) + 3 * p2 - w;
             let v2 = (t2 * inv_m01) % p2;
 
             // u = v0 + P0*v1 + P0*P1*v2 ; need u mod 2^32 and sign of (u - P/2).
