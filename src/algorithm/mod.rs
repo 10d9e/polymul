@@ -161,7 +161,7 @@ unsafe fn r4_dif(x: &mut [u64; N], i0: usize, i1: usize, i2: usize, i3: usize,
 
     *x.get_unchecked_mut(i0) = (u + v) % p;
     *x.get_unchecked_mut(i1) = ((u + 2 * p - v) * tc) % p;
-    *x.get_unchecked_mut(i2) = { let s = m02 + m13; if s >= p { s - p } else { s } };
+    *x.get_unchecked_mut(i2) = (m02 + m13) % p;
     *x.get_unchecked_mut(i3) = ((m02 + p - m13) * tc) % p;
 }
 
@@ -184,7 +184,7 @@ unsafe fn r4_dif_pre(src: &[u32; N], psi: &[u64; N], dst: &mut [u64; N],
 
     *dst.get_unchecked_mut(i0) = (u + v) % p;
     *dst.get_unchecked_mut(i1) = ((u + 2 * p - v) * tc) % p;
-    *dst.get_unchecked_mut(i2) = { let s = m02 + m13; if s >= p { s - p } else { s } };
+    *dst.get_unchecked_mut(i2) = (m02 + m13) % p;
     *dst.get_unchecked_mut(i3) = ((m02 + p - m13) * tc) % p;
 }
 
@@ -204,7 +204,7 @@ unsafe fn r4_dif_q1(x: &mut [u64; N], i0: usize, i1: usize, i2: usize, i3: usize
 
     *x.get_unchecked_mut(i0) = (u + v) % p;
     *x.get_unchecked_mut(i1) = (u + 2 * p - v) % p;
-    *x.get_unchecked_mut(i2) = { let s = m02 + m13; if s >= p { s - p } else { s } };
+    *x.get_unchecked_mut(i2) = (m02 + m13) % p;
     *x.get_unchecked_mut(i3) = (m02 + p - m13) % p;
 }
 
@@ -417,8 +417,9 @@ pub fn poly_mul(plan: &mut Plan, a: &[u32; 1024], b: &[u32; 1024]) -> [u32; 1024
     unsafe {
         for j in 0..N {
             let v0 = *r0.get_unchecked(j);
-            // v1 = (r1 - v0) * inv(P0) mod P1.  v0 = r0[j] < P0 < P1, so v0 % P1 == v0.
-            let t1 = (*r1.get_unchecked(j) + p1 - v0) % p1;
+            // v1 = (r1 - v0) * inv(P0) mod P1.  v0 = r0[j] < P0 < P1 (so v0 % P1 == v0),
+            // and t1 = r1 + p1 - v0 < 2*P1 feeds only `* inv01 % p1`, so it stays lazy.
+            let t1 = *r1.get_unchecked(j) + p1 - v0;
             let v1 = (t1 * inv01) % p1;
             // w = (v0 + P0*v1) mod P2.  v0 (< 2^30) plus (p0_mod_p2*v1 % p2) (< P2)
             // sums to < 2^31, so the outer % p2 reduces it without pre-reducing v0.
