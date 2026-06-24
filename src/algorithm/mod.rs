@@ -28,6 +28,10 @@
 // `plan_new`, which is free under the harness' differential fuel metric.
 
 const N: usize = 1024;
+// Radix-8 twiddle tables are only indexed at [q8 + j] for q8 in {16, 128} and
+// j < q8, i.e. indices below 256, so they are sized accordingly to keep `Plan`
+// small enough for the wasm meter's linear memory.
+const R8N: usize = 256;
 
 // Three primes p with 2048 | (p-1) and primitive root 3; each p < 2^30 so that
 // products of residues fit in u64.
@@ -49,18 +53,26 @@ struct PrimeTables {
     // Forward radix-8 (three fused DIF stages) twiddles, indexed [q8 + j] where q8
     // is the eighth-block size. ra{0..3} = w_{8q}^{j + k*q}, rb0 = w_{4q}^j,
     // rb1 = w_{4q}^{j+q}, rc0 = w_{2q}^j.
-    ra0: [u64; N],
-    ra1: [u64; N],
-    ra2: [u64; N],
-    ra3: [u64; N],
-    rb0: [u64; N],
-    rb1: [u64; N],
-    rc0: [u64; N],
+    ra0: [u64; R8N],
+    ra1: [u64; R8N],
+    ra2: [u64; R8N],
+    ra3: [u64; R8N],
+    rb0: [u64; R8N],
+    rb1: [u64; R8N],
+    rc0: [u64; R8N],
     // Inverse radix-4 (two fused DIT stages) twiddles, indexed [q + j].
     // ita = w_{4q}^{-j}, itb = w_{4q}^{-(j+q)}, itc = w_{2q}^{-j} = ita^2.
     ita: [u64; N],
     itb: [u64; N],
     itc: [u64; N],
+    // Inverse radix-8 (three fused DIT stages) twiddles, indexed [q8 + j].
+    ica0: [u64; R8N],
+    ica1: [u64; R8N],
+    ica2: [u64; R8N],
+    ica3: [u64; R8N],
+    icb0: [u64; R8N],
+    icb1: [u64; R8N],
+    icc0: [u64; R8N],
 }
 
 /// Opaque plan holding precomputed tables (built once in `plan_new`, free).
@@ -148,13 +160,13 @@ fn build_tables(p: u64) -> PrimeTables {
     }
 
     // Forward radix-8 twiddles for the first two passes (q8 = N/8, N/64).
-    let mut ra0 = [0u64; N];
-    let mut ra1 = [0u64; N];
-    let mut ra2 = [0u64; N];
-    let mut ra3 = [0u64; N];
-    let mut rb0 = [0u64; N];
-    let mut rb1 = [0u64; N];
-    let mut rc0 = [0u64; N];
+    let mut ra0 = [0u64; R8N];
+    let mut ra1 = [0u64; R8N];
+    let mut ra2 = [0u64; R8N];
+    let mut ra3 = [0u64; R8N];
+    let mut rb0 = [0u64; R8N];
+    let mut rb1 = [0u64; R8N];
+    let mut rc0 = [0u64; R8N];
     let mut q8 = N / 8;
     loop {
         let w8 = modpow(w_root, (N / (8 * q8)) as u64, p);
@@ -185,9 +197,48 @@ fn build_tables(p: u64) -> PrimeTables {
         q8 /= 8;
     }
 
+    // Inverse radix-8 twiddles for the last two inverse passes (q8 = N/64, N/8).
+    let mut ica0 = [0u64; R8N];
+    let mut ica1 = [0u64; R8N];
+    let mut ica2 = [0u64; R8N];
+    let mut ica3 = [0u64; R8N];
+    let mut icb0 = [0u64; R8N];
+    let mut icb1 = [0u64; R8N];
+    let mut icc0 = [0u64; R8N];
+    let mut q8 = N / 64;
+    loop {
+        let w8 = modpow(wi_root, (N / (8 * q8)) as u64, p);
+        let w4 = modpow(wi_root, (N / (4 * q8)) as u64, p);
+        let w2 = modpow(wi_root, (N / (2 * q8)) as u64, p);
+        let w8q1 = modpow(w8, q8 as u64, p);
+        let w8q2 = modpow(w8, (2 * q8) as u64, p);
+        let w8q3 = modpow(w8, (3 * q8) as u64, p);
+        let w4q1 = modpow(w4, q8 as u64, p);
+        let mut a = 1u64;
+        let mut b = 1u64;
+        let mut c = 1u64;
+        for j in 0..q8 {
+            ica0[q8 + j] = a;
+            ica1[q8 + j] = (a as u128 * w8q1 as u128 % p as u128) as u64;
+            ica2[q8 + j] = (a as u128 * w8q2 as u128 % p as u128) as u64;
+            ica3[q8 + j] = (a as u128 * w8q3 as u128 % p as u128) as u64;
+            icb0[q8 + j] = b;
+            icb1[q8 + j] = (b as u128 * w4q1 as u128 % p as u128) as u64;
+            icc0[q8 + j] = c;
+            a = (a as u128 * w8 as u128 % p as u128) as u64;
+            b = (b as u128 * w4 as u128 % p as u128) as u64;
+            c = (c as u128 * w2 as u128 % p as u128) as u64;
+        }
+        if q8 == N / 8 {
+            break;
+        }
+        q8 *= 8;
+    }
+
     PrimeTables {
         p, psi, ipsi, ta, tb, tc, ita, itb, itc,
         ra0, ra1, ra2, ra3, rb0, rb1, rc0,
+        ica0, ica1, ica2, ica3, icb0, icb1, icc0,
     }
 }
 
@@ -409,7 +460,120 @@ fn ntt_dif2(a: &[u32; N], b: &[u32; N], fa: &mut [u64; N], fb: &mut [u64; N], t:
     }
 }
 
-/// Inverse NTT using fused radix-4 DIT passes (5 passes instead of 10).
+/// Fused radix-8 DIT butterfly (three combined radix-2 DIT stages) in place.
+#[inline(always)]
+#[allow(clippy::too_many_arguments)]
+unsafe fn r8_dit(x: &mut [u64; N], i0: usize, i1: usize, i2: usize, i3: usize,
+                 i4: usize, i5: usize, i6: usize, i7: usize,
+                 a0: u64, a1: u64, a2: u64, a3: u64, b0: u64, b1: u64, c0: u64, p: u64) {
+    let x0 = *x.get_unchecked(i0);
+    let x1 = *x.get_unchecked(i1);
+    let x2 = *x.get_unchecked(i2);
+    let x3 = *x.get_unchecked(i3);
+    let x4 = *x.get_unchecked(i4);
+    let x5 = *x.get_unchecked(i5);
+    let x6 = *x.get_unchecked(i6);
+    let x7 = *x.get_unchecked(i7);
+
+    // stage 1 (L = q8): p* lazy in [0, 2p).
+    let v1 = (x1 * c0) % p;
+    let v3 = (x3 * c0) % p;
+    let v5 = (x5 * c0) % p;
+    let v7 = (x7 * c0) % p;
+    let p0 = x0 + v1;
+    let p1 = x0 + p - v1;
+    let p2 = x2 + v3;
+    let p3 = x2 + p - v3;
+    let p4 = x4 + v5;
+    let p5 = x4 + p - v5;
+    let p6 = x6 + v7;
+    let p7 = x6 + p - v7;
+    // stage 2 (L = 2q8): q* lazy in [0, 3p).
+    let w2 = (p2 * b0) % p;
+    let w3 = (p3 * b1) % p;
+    let w6 = (p6 * b0) % p;
+    let w7 = (p7 * b1) % p;
+    let q0 = p0 + w2;
+    let q2 = p0 + p - w2;
+    let q1 = p1 + w3;
+    let q3 = p1 + p - w3;
+    let q4 = p4 + w6;
+    let q6 = p4 + p - w6;
+    let q5 = p5 + w7;
+    let q7 = p5 + p - w7;
+    // stage 3 (L = 4q8).
+    let u4 = (q4 * a0) % p;
+    let u5 = (q5 * a1) % p;
+    let u6 = (q6 * a2) % p;
+    let u7 = (q7 * a3) % p;
+    *x.get_unchecked_mut(i0) = (q0 + u4) % p;
+    *x.get_unchecked_mut(i4) = (q0 + p - u4) % p;
+    *x.get_unchecked_mut(i1) = (q1 + u5) % p;
+    *x.get_unchecked_mut(i5) = (q1 + p - u5) % p;
+    *x.get_unchecked_mut(i2) = (q2 + u6) % p;
+    *x.get_unchecked_mut(i6) = (q2 + p - u6) % p;
+    *x.get_unchecked_mut(i3) = (q3 + u7) % p;
+    *x.get_unchecked_mut(i7) = (q3 + p - u7) % p;
+}
+
+/// Fused radix-8 DIT butterfly that folds the psi^{-j} * N^{-1} post-weight into
+/// the eight output stores (each output then lands in natural order, reduced).
+#[inline(always)]
+#[allow(clippy::too_many_arguments)]
+unsafe fn r8_dit_post(x: &mut [u64; N], ipsi: &[u64; N],
+                      i0: usize, i1: usize, i2: usize, i3: usize,
+                      i4: usize, i5: usize, i6: usize, i7: usize,
+                      a0: u64, a1: u64, a2: u64, a3: u64, b0: u64, b1: u64, c0: u64, p: u64) {
+    let x0 = *x.get_unchecked(i0);
+    let x1 = *x.get_unchecked(i1);
+    let x2 = *x.get_unchecked(i2);
+    let x3 = *x.get_unchecked(i3);
+    let x4 = *x.get_unchecked(i4);
+    let x5 = *x.get_unchecked(i5);
+    let x6 = *x.get_unchecked(i6);
+    let x7 = *x.get_unchecked(i7);
+
+    let v1 = (x1 * c0) % p;
+    let v3 = (x3 * c0) % p;
+    let v5 = (x5 * c0) % p;
+    let v7 = (x7 * c0) % p;
+    let p0 = x0 + v1;
+    let p1 = x0 + p - v1;
+    let p2 = x2 + v3;
+    let p3 = x2 + p - v3;
+    let p4 = x4 + v5;
+    let p5 = x4 + p - v5;
+    let p6 = x6 + v7;
+    let p7 = x6 + p - v7;
+    let w2 = (p2 * b0) % p;
+    let w3 = (p3 * b1) % p;
+    let w6 = (p6 * b0) % p;
+    let w7 = (p7 * b1) % p;
+    let q0 = p0 + w2;
+    let q2 = p0 + p - w2;
+    let q1 = p1 + w3;
+    let q3 = p1 + p - w3;
+    let q4 = p4 + w6;
+    let q6 = p4 + p - w6;
+    let q5 = p5 + w7;
+    let q7 = p5 + p - w7;
+    let u4 = (q4 * a0) % p;
+    let u5 = (q5 * a1) % p;
+    let u6 = (q6 * a2) % p;
+    let u7 = (q7 * a3) % p;
+    *x.get_unchecked_mut(i0) = ((q0 + u4) * *ipsi.get_unchecked(i0)) % p;
+    *x.get_unchecked_mut(i4) = ((q0 + p - u4) * *ipsi.get_unchecked(i4)) % p;
+    *x.get_unchecked_mut(i1) = ((q1 + u5) * *ipsi.get_unchecked(i1)) % p;
+    *x.get_unchecked_mut(i5) = ((q1 + p - u5) * *ipsi.get_unchecked(i5)) % p;
+    *x.get_unchecked_mut(i2) = ((q2 + u6) * *ipsi.get_unchecked(i2)) % p;
+    *x.get_unchecked_mut(i6) = ((q2 + p - u6) * *ipsi.get_unchecked(i6)) % p;
+    *x.get_unchecked_mut(i3) = ((q3 + u7) * *ipsi.get_unchecked(i3)) % p;
+    *x.get_unchecked_mut(i7) = ((q3 + p - u7) * *ipsi.get_unchecked(i7)) % p;
+}
+
+/// Inverse NTT: two fused radix-4 DIT passes (the first folding in the pointwise
+/// product) followed by two fused radix-8 DIT passes (the last folding in the
+/// psi^{-j}*N^{-1} post-weight) — 4 memory passes covering all 10 radix-2 stages.
 /// Bit-reversed-order input -> natural-order output. Inverse of `ntt_dif2`'s
 /// per-array transform.
 #[inline(always)]
@@ -445,9 +609,9 @@ fn intt_dit(a: &mut [u64; N], b: &[u64; N], t: &PrimeTables) {
         }
     }
 
-    // Middle passes (q = 4, ..., N/16).
-    let mut q = 4usize;
-    while q < N / 4 {
+    // Pass 2 (q = 4): radix-4 DIT.
+    {
+        let q = 4usize;
         let mut start = 0usize;
         while start < N {
             for j in 0..q {
@@ -467,7 +631,6 @@ fn intt_dit(a: &mut [u64; N], b: &[u64; N], t: &PrimeTables) {
 
                     let v1 = (x1 * wc) % p;
                     let v3 = (x3 * wc) % p;
-                    // p0, p1 stay lazily in [0, 2p): they feed only output `% p`.
                     let p0 = x0 + v1;
                     let p1 = x0 + p - v1;
                     let va = ((x2 + v3) * wa) % p;
@@ -480,39 +643,59 @@ fn intt_dit(a: &mut [u64; N], b: &[u64; N], t: &PrimeTables) {
             }
             start += 4 * q;
         }
-        q <<= 2;
     }
 
-    // Last pass (q = N/4, single block): fold the psi^{-j} * N^{-1} post-weight
-    // into the four output stores.
-    let q = N / 4;
-    for j in 0..q {
-        unsafe {
-            let wa = *t.ita.get_unchecked(q + j);
-            let wb = *t.itb.get_unchecked(q + j);
-            let wc = *t.itc.get_unchecked(q + j);
-            let i0 = j;
-            let i1 = i0 + q;
-            let i2 = i1 + q;
-            let i3 = i2 + q;
+    // Pass 3 (q8 = N/64): radix-8 DIT (stages L = 16, 32, 64).
+    {
+        let q8 = N / 64;
+        let mut start = 0usize;
+        while start < N {
+            for j in 0..q8 {
+                unsafe {
+                    let a0 = *t.ica0.get_unchecked(q8 + j);
+                    let a1 = *t.ica1.get_unchecked(q8 + j);
+                    let a2 = *t.ica2.get_unchecked(q8 + j);
+                    let a3 = *t.ica3.get_unchecked(q8 + j);
+                    let b0 = *t.icb0.get_unchecked(q8 + j);
+                    let b1 = *t.icb1.get_unchecked(q8 + j);
+                    let c0 = *t.icc0.get_unchecked(q8 + j);
+                    let i0 = start + j;
+                    let i1 = i0 + q8;
+                    let i2 = i1 + q8;
+                    let i3 = i2 + q8;
+                    let i4 = i3 + q8;
+                    let i5 = i4 + q8;
+                    let i6 = i5 + q8;
+                    let i7 = i6 + q8;
+                    r8_dit(a, i0, i1, i2, i3, i4, i5, i6, i7, a0, a1, a2, a3, b0, b1, c0, p);
+                }
+            }
+            start += 8 * q8;
+        }
+    }
 
-            let x0 = *a.get_unchecked(i0);
-            let x1 = *a.get_unchecked(i1);
-            let x2 = *a.get_unchecked(i2);
-            let x3 = *a.get_unchecked(i3);
-
-            let v1 = (x1 * wc) % p;
-            let v3 = (x3 * wc) % p;
-            // p0, p1 and the outputs o0..o3 all stay lazy: each output feeds a
-            // final `* ipsi % p`, which reduces the whole thing.
-            let p0 = x0 + v1;
-            let p1 = x0 + p - v1;
-            let va = ((x2 + v3) * wa) % p;
-            let vb = ((x2 + p - v3) * wb) % p;
-            *a.get_unchecked_mut(i0) = ((p0 + va) * *t.ipsi.get_unchecked(i0)) % p;
-            *a.get_unchecked_mut(i2) = ((p0 + p - va) * *t.ipsi.get_unchecked(i2)) % p;
-            *a.get_unchecked_mut(i1) = ((p1 + vb) * *t.ipsi.get_unchecked(i1)) % p;
-            *a.get_unchecked_mut(i3) = ((p1 + p - vb) * *t.ipsi.get_unchecked(i3)) % p;
+    // Pass 4 (q8 = N/8, single block): radix-8 DIT folding in the post-weight.
+    {
+        let q8 = N / 8;
+        for j in 0..q8 {
+            unsafe {
+                let a0 = *t.ica0.get_unchecked(q8 + j);
+                let a1 = *t.ica1.get_unchecked(q8 + j);
+                let a2 = *t.ica2.get_unchecked(q8 + j);
+                let a3 = *t.ica3.get_unchecked(q8 + j);
+                let b0 = *t.icb0.get_unchecked(q8 + j);
+                let b1 = *t.icb1.get_unchecked(q8 + j);
+                let c0 = *t.icc0.get_unchecked(q8 + j);
+                let i1 = j + q8;
+                let i2 = i1 + q8;
+                let i3 = i2 + q8;
+                let i4 = i3 + q8;
+                let i5 = i4 + q8;
+                let i6 = i5 + q8;
+                let i7 = i6 + q8;
+                r8_dit_post(a, &t.ipsi, j, i1, i2, i3, i4, i5, i6, i7,
+                            a0, a1, a2, a3, b0, b1, c0, p);
+            }
         }
     }
 }
