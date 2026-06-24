@@ -5,6 +5,11 @@ on:
     branches: [main]
     paths:
       - src/algorithm/**
+  # Auto-merge uses GITHUB_TOKEN when SCOREKEEPER_PAT is unset; those pushes do
+  # not fire push-triggered workflows. Chain off Auto-merge instead.
+  workflow_run:
+    workflows: [Auto-merge]
+    types: [completed]
   workflow_dispatch:
 
 concurrency:
@@ -13,6 +18,7 @@ concurrency:
 
 jobs:
   score:
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
