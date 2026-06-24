@@ -244,8 +244,9 @@ fn ntt_dif2(a: &[u32; N], b: &[u32; N], fa: &mut [u64; N], fb: &mut [u64; N], t:
 #[inline(always)]
 fn intt_dit(a: &mut [u64; N], t: &PrimeTables) {
     let p = t.p;
+    // All passes except the last (q = 1, 4, ..., N/16).
     let mut q = 1usize;
-    loop {
+    while q < N / 4 {
         let mut start = 0usize;
         while start < N {
             for j in 0..q {
@@ -263,7 +264,6 @@ fn intt_dit(a: &mut [u64; N], t: &PrimeTables) {
                     let x2 = *a.get_unchecked(i2);
                     let x3 = *a.get_unchecked(i3);
 
-                    // first DIT stage (half-size q)
                     let v1 = (x1 * wc) % p;
                     let v3 = (x3 * wc) % p;
                     let p0 = { let s = x0 + v1; if s >= p { s - p } else { s } };
@@ -271,7 +271,6 @@ fn intt_dit(a: &mut [u64; N], t: &PrimeTables) {
                     let p2 = { let s = x2 + v3; if s >= p { s - p } else { s } };
                     let p3 = { let d = x2 + p - v3; if d >= p { d - p } else { d } };
 
-                    // second DIT stage (half-size 2q)
                     let va = (p2 * wa) % p;
                     let vb = (p3 * wb) % p;
                     *a.get_unchecked_mut(i0) = { let s = p0 + va; if s >= p { s - p } else { s } };
@@ -282,10 +281,45 @@ fn intt_dit(a: &mut [u64; N], t: &PrimeTables) {
             }
             start += 4 * q;
         }
-        if q == N / 4 {
-            break;
-        }
         q <<= 2;
+    }
+
+    // Last pass (q = N/4, single block): fold the psi^{-j} * N^{-1} post-weight
+    // into the four output stores.
+    let q = N / 4;
+    for j in 0..q {
+        unsafe {
+            let wa = *t.ita.get_unchecked(q + j);
+            let wb = *t.itb.get_unchecked(q + j);
+            let wc = *t.itc.get_unchecked(q + j);
+            let i0 = j;
+            let i1 = i0 + q;
+            let i2 = i1 + q;
+            let i3 = i2 + q;
+
+            let x0 = *a.get_unchecked(i0);
+            let x1 = *a.get_unchecked(i1);
+            let x2 = *a.get_unchecked(i2);
+            let x3 = *a.get_unchecked(i3);
+
+            let v1 = (x1 * wc) % p;
+            let v3 = (x3 * wc) % p;
+            let p0 = { let s = x0 + v1; if s >= p { s - p } else { s } };
+            let p1 = { let d = x0 + p - v1; if d >= p { d - p } else { d } };
+            let p2 = { let s = x2 + v3; if s >= p { s - p } else { s } };
+            let p3 = { let d = x2 + p - v3; if d >= p { d - p } else { d } };
+
+            let va = (p2 * wa) % p;
+            let vb = (p3 * wb) % p;
+            let o0 = { let s = p0 + va; if s >= p { s - p } else { s } };
+            let o2 = { let d = p0 + p - va; if d >= p { d - p } else { d } };
+            let o1 = { let s = p1 + vb; if s >= p { s - p } else { s } };
+            let o3 = { let d = p1 + p - vb; if d >= p { d - p } else { d } };
+            *a.get_unchecked_mut(i0) = (o0 * *t.ipsi.get_unchecked(i0)) % p;
+            *a.get_unchecked_mut(i2) = (o2 * *t.ipsi.get_unchecked(i2)) % p;
+            *a.get_unchecked_mut(i1) = (o1 * *t.ipsi.get_unchecked(i1)) % p;
+            *a.get_unchecked_mut(i3) = (o3 * *t.ipsi.get_unchecked(i3)) % p;
+        }
     }
 }
 
@@ -302,11 +336,6 @@ fn convolve_mod(t: &PrimeTables, a: &[u32; N], b: &[u32; N]) -> [u64; N] {
         }
     }
     intt_dit(&mut fa, t);
-    unsafe {
-        for j in 0..N {
-            *fa.get_unchecked_mut(j) = (*fa.get_unchecked(j) * *t.ipsi.get_unchecked(j)) % p;
-        }
-    }
     fa
 }
 
