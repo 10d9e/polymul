@@ -3,7 +3,7 @@
 Leaderboard of recorded submissions. Full narratives live in
 [`history/entries/`](history/entries/).
 
-**Current record: 29177200** (@10d9e, entry 0010)
+**Current record: 28234192** (@10d9e, entry 0011)
 
 | # | date | author | SCORE | Δ vs record | commit | entry | note |
 |---|------|--------|-------|-------------|--------|-------|------|
@@ -17,3 +17,4 @@ Leaderboard of recorded submissions. Full narratives live in
 | 0008 | 2026-06-24 | @10d9e | 33142128 | -1334976 (new record) | `486fc90` | [0008](history/entries/0008--10d9e.md) | The elementwise spectral product fa[i] *= fb[i] was a separate pass between the … |
 | 0009 | 2026-06-24 | @10d9e | 33109360 | -32768 (new record) | `3f2e4ed` | [0009](history/entries/0009--10d9e.md) | In the Garner CRT step, v0 = r0[j] is already a residue mod P0, and P0 < P1, so … |
 | 0010 | 2026-06-24 | @10d9e | 29177200 | -3932160 (new record) | `5ad35c6` | [0010](history/entries/0010--10d9e.md) | In the fused radix-4 forward butterfly, several intermediate difference terms (x… |
+| 0011 | 2026-06-24 | @10d9e | 28234192 | -943008 (new record) | `dfaaa90` | [0011](history/entries/0011--10d9e.md) | Mirror the forward lazy-reduction change in the inverse DIT butterfly. The terms… |
