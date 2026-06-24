@@ -189,6 +189,26 @@ unsafe fn r4_dif_pre(src: &[u32; N], psi: &[u64; N], dst: &mut [u64; N],
     *dst.get_unchecked_mut(i3) = ((m02 + p - m13) * tc) % p;
 }
 
+/// Forward radix-4 butterfly for the last pass (q = 1), where ta = tc = 1 so
+/// those multiplies vanish (only tb = w_4 remains).
+#[inline(always)]
+unsafe fn r4_dif_q1(x: &mut [u64; N], i0: usize, i1: usize, i2: usize, i3: usize, tb: u64, p: u64) {
+    let x0 = *x.get_unchecked(i0);
+    let x1 = *x.get_unchecked(i1);
+    let x2 = *x.get_unchecked(i2);
+    let x3 = *x.get_unchecked(i3);
+
+    let s02 = { let s = x0 + x2; if s >= p { s - p } else { s } };
+    let s13 = { let s = x1 + x3; if s >= p { s - p } else { s } };
+    let m02 = (x0 + p - x2) % p;
+    let m13 = ((x1 + p - x3) * tb) % p;
+
+    *x.get_unchecked_mut(i0) = { let s = s02 + s13; if s >= p { s - p } else { s } };
+    *x.get_unchecked_mut(i1) = (s02 + p - s13) % p;
+    *x.get_unchecked_mut(i2) = { let s = m02 + m13; if s >= p { s - p } else { s } };
+    *x.get_unchecked_mut(i3) = (m02 + p - m13) % p;
+}
+
 /// Forward NTT of both multiply operands in lockstep, using fused radix-4 passes
 /// (5 passes instead of 10). The negacyclic pre-weight psi^i is folded into the
 /// first pass, so the raw u32 inputs are consumed directly into the u64 buffers.
@@ -210,9 +230,9 @@ fn ntt_dif2(a: &[u32; N], b: &[u32; N], fa: &mut [u64; N], fb: &mut [u64; N], t:
             r4_dif_pre(b, &t.psi, fb, j, i1, i2, i3, ta, tb, tc, p);
         }
     }
-    // Remaining passes operate in place on the u64 buffers.
+    // Middle passes (q = N/16, ..., 4) operate in place on the u64 buffers.
     let mut q = q0 >> 2;
-    loop {
+    while q > 1 {
         let mut start = 0usize;
         while start < N {
             for j in 0..q {
@@ -230,10 +250,17 @@ fn ntt_dif2(a: &[u32; N], b: &[u32; N], fa: &mut [u64; N], fb: &mut [u64; N], t:
             }
             start += 4 * q;
         }
-        if q == 1 {
-            break;
-        }
         q >>= 2;
+    }
+    // Last pass (q = 1): trivial twiddles ta = tc = 1.
+    unsafe {
+        let tb = *t.tb.get_unchecked(1);
+        let mut start = 0usize;
+        while start < N {
+            r4_dif_q1(fa, start, start + 1, start + 2, start + 3, tb, p);
+            r4_dif_q1(fb, start, start + 1, start + 2, start + 3, tb, p);
+            start += 4;
+        }
     }
 }
 
@@ -243,11 +270,11 @@ fn ntt_dif2(a: &[u32; N], b: &[u32; N], fa: &mut [u64; N], fb: &mut [u64; N], t:
 #[inline(always)]
 fn intt_dit(a: &mut [u64; N], b: &[u64; N], t: &PrimeTables) {
     let p = t.p;
-    // First pass (q = 1): fold in the pointwise product a[i] *= b[i].
+    // First pass (q = 1): fold in the pointwise product a[i] *= b[i]. Here the
+    // twiddles ita[1] = itc[1] = 1 (only itb[1] = w_4^{-1} is nontrivial), so the
+    // v1/v3 weighting and the va multiply collapse away.
     unsafe {
-        let wa = *t.ita.get_unchecked(1);
         let wb = *t.itb.get_unchecked(1);
-        let wc = *t.itc.get_unchecked(1);
         let mut start = 0usize;
         while start < N {
             let i0 = start;
@@ -259,14 +286,11 @@ fn intt_dit(a: &mut [u64; N], b: &[u64; N], t: &PrimeTables) {
             let x2 = (*a.get_unchecked(i2) * *b.get_unchecked(i2)) % p;
             let x3 = (*a.get_unchecked(i3) * *b.get_unchecked(i3)) % p;
 
-            let v1 = (x1 * wc) % p;
-            let v3 = (x3 * wc) % p;
-            let p0 = { let s = x0 + v1; if s >= p { s - p } else { s } };
-            let p1 = { let d = x0 + p - v1; if d >= p { d - p } else { d } };
-            // p2 = x2+v3 and p3 = x2+p-v3 feed only the multiplies, so % p reduces
-            // them fully -- no separate conditional subtraction needed.
-            let va = ((x2 + v3) * wa) % p;
-            let vb = ((x2 + p - v3) * wb) % p;
+            // v1 = x1, v3 = x3 (wc = 1); va = (x2 + x3) mod p (wa = 1).
+            let p0 = { let s = x0 + x1; if s >= p { s - p } else { s } };
+            let p1 = { let d = x0 + p - x1; if d >= p { d - p } else { d } };
+            let va = { let s = x2 + x3; if s >= p { s - p } else { s } };
+            let vb = ((x2 + p - x3) * wb) % p;
             *a.get_unchecked_mut(i0) = { let s = p0 + va; if s >= p { s - p } else { s } };
             *a.get_unchecked_mut(i2) = { let d = p0 + p - va; if d >= p { d - p } else { d } };
             *a.get_unchecked_mut(i1) = { let s = p1 + vb; if s >= p { s - p } else { s } };
