@@ -317,7 +317,13 @@ unsafe fn r16_dif(x: &mut [u64; N], base: usize, w16: &[u64; 8], p: u64) {
         let tstep = 8 / h;
         let mut start = 0usize;
         while start < 16 {
-            let mut kk = 0usize;
+            // kk = 0: twiddle w16^0 = 1, so the difference stays lazy (no multiply,
+            // no % p); the final reduction handles it.
+            let u0 = *t.get_unchecked(start);
+            let v0 = *t.get_unchecked(start + h);
+            *t.get_unchecked_mut(start) = u0 + v0;
+            *t.get_unchecked_mut(start + h) = u0 + c - v0;
+            let mut kk = 1usize;
             while kk < h {
                 let u = *t.get_unchecked(start + kk);
                 let v = *t.get_unchecked(start + kk + h);
@@ -536,22 +542,30 @@ unsafe fn r16_dit_pw(a: &mut [u64; N], b: &[u64; N], base: usize, iw16: &[u64; 8
         *t.get_unchecked_mut(k) = (*a.get_unchecked(base + k) * *b.get_unchecked(base + k)) % p;
         k += 1;
     }
+    // c = current value bound (doubles per stage). For kk = 0 the twiddle is 1, so
+    // the upper operand stays lazy and needs no reduction.
     let mut h = 1usize;
+    let mut c = p;
     loop {
         let tstep = 8 / h;
         let mut start = 0usize;
         while start < 16 {
-            let mut kk = 0usize;
+            let u0 = *t.get_unchecked(start);
+            let v0 = *t.get_unchecked(start + h);
+            *t.get_unchecked_mut(start) = u0 + v0;
+            *t.get_unchecked_mut(start + h) = u0 + c - v0;
+            let mut kk = 1usize;
             while kk < h {
                 let tw = *iw16.get_unchecked(tstep * kk);
                 let u = *t.get_unchecked(start + kk);
                 let v = (*t.get_unchecked(start + kk + h) * tw) % p;
                 *t.get_unchecked_mut(start + kk) = u + v;
-                *t.get_unchecked_mut(start + kk + h) = u + p - v;
+                *t.get_unchecked_mut(start + kk + h) = u + c - v;
                 kk += 1;
             }
             start += 2 * h;
         }
+        c <<= 1;
         if h == 8 {
             break;
         }
