@@ -45,11 +45,6 @@ struct PrimeTables {
     p: u64,
     psi: [u64; N],  // psi^j           (pre-weight)
     ipsi: [u64; N], // psi^{-j} * N^-1 (post-weight, folds inverse-transform scale)
-    // Forward radix-4 (two fused DIF stages) twiddles, indexed [q + j] where q is
-    // the quarter-block size. ta = w_{4q}^j, tb = ta*w_4, tc = ta^2.
-    ta: [u64; N],
-    tb: [u64; N],
-    tc: [u64; N],
     // Forward radix-8 (three fused DIF stages) twiddles, indexed [q8 + j] where q8
     // is the eighth-block size. ra{0..3} = w_{8q}^{j + k*q}, rb0 = w_{4q}^j,
     // rb1 = w_{4q}^{j+q}, rc0 = w_{2q}^j.
@@ -73,6 +68,9 @@ struct PrimeTables {
     icb0: [u64; R8N],
     icb1: [u64; R8N],
     icc0: [u64; R8N],
+    // Powers w16^0..w16^7 of the 16th root of unity (forward), used by the fused
+    // radix-16 last pass (constant twiddles for stages L = 8,4,2,1).
+    w16: [u64; 8],
 }
 
 /// Opaque plan holding precomputed tables (built once in `plan_new`, free).
@@ -127,30 +125,20 @@ fn build_tables(p: u64) -> PrimeTables {
         iacc = (iacc as u128 * psi_inv as u128 % p as u128) as u64;
     }
 
-    // Radix-4 twiddles: each fused pass combines two radix-2 stages, processing
-    // quarter-blocks of size q for q in {N/4, N/16, ..., 1}.
-    let i4 = modpow(w_root, (N / 4) as u64, p); // w_4 = primitive 4th root
+    // Inverse radix-4 twiddles (the inverse still uses two radix-4 DIT passes),
+    // for quarter-blocks of size q in {1, 4}.
     let i4i = modpow(wi_root, (N / 4) as u64, p); // w_4^{-1}
-    let mut ta = [0u64; N];
-    let mut tb = [0u64; N];
-    let mut tc = [0u64; N];
     let mut ita = [0u64; N];
     let mut itb = [0u64; N];
     let mut itc = [0u64; N];
     let mut q = N / 4;
     loop {
-        let wr = modpow(w_root, (N / (4 * q)) as u64, p); // w_{4q}
         let wir = modpow(wi_root, (N / (4 * q)) as u64, p); // w_{4q}^{-1}
-        let mut a_j = 1u64; // w_{4q}^j
         let mut ai_j = 1u64; // w_{4q}^{-j}
         for j in 0..q {
-            ta[q + j] = a_j;
-            tb[q + j] = (a_j as u128 * i4 as u128 % p as u128) as u64;
-            tc[q + j] = (a_j as u128 * a_j as u128 % p as u128) as u64;
             ita[q + j] = ai_j;
             itb[q + j] = (ai_j as u128 * i4i as u128 % p as u128) as u64;
             itc[q + j] = (ai_j as u128 * ai_j as u128 % p as u128) as u64;
-            a_j = (a_j as u128 * wr as u128 % p as u128) as u64;
             ai_j = (ai_j as u128 * wir as u128 % p as u128) as u64;
         }
         if q == 1 {
@@ -235,58 +223,21 @@ fn build_tables(p: u64) -> PrimeTables {
         q8 *= 8;
     }
 
+    // 16th-root powers for the fused radix-16 last forward pass.
+    let w16r = modpow(w_root, (N / 16) as u64, p);
+    let mut w16 = [0u64; 8];
+    let mut wacc = 1u64;
+    for k in 0..8 {
+        w16[k] = wacc;
+        wacc = (wacc as u128 * w16r as u128 % p as u128) as u64;
+    }
+
     PrimeTables {
-        p, psi, ipsi, ta, tb, tc, ita, itb, itc,
+        p, psi, ipsi, ita, itb, itc,
         ra0, ra1, ra2, ra3, rb0, rb1, rc0,
         ica0, ica1, ica2, ica3, icb0, icb1, icc0,
+        w16,
     }
-}
-
-/// One fused radix-4 DIF butterfly (two combined radix-2 DIF stages) on the four
-/// values held at indices i0,i1,i2,i3 of `x`, using twiddles ta,tb,tc.
-/// Equivalent to two consecutive radix-2 Gentleman–Sande stages, so the overall
-/// permutation remains base-2 bit reversal.
-#[inline(always)]
-unsafe fn r4_dif(x: &mut [u64; N], i0: usize, i1: usize, i2: usize, i3: usize,
-                 ta: u64, tb: u64, tc: u64, p: u64) {
-    let x0 = *x.get_unchecked(i0);
-    let x1 = *x.get_unchecked(i1);
-    let x2 = *x.get_unchecked(i2);
-    let x3 = *x.get_unchecked(i3);
-
-    // u = x0+x2 and v = x1+x3 stay lazily in [0, 2p): they feed only the final
-    // `% p` (i0) and a `* tc % p` (i1), which reduce fully on their own.
-    let u = x0 + x2;
-    let v = x1 + x3;
-    let m02 = ((x0 + p - x2) * ta) % p;
-    let m13 = ((x1 + p - x3) * tb) % p;
-
-    *x.get_unchecked_mut(i0) = (u + v) % p;
-    *x.get_unchecked_mut(i1) = ((u + 2 * p - v) * tc) % p;
-    *x.get_unchecked_mut(i2) = (m02 + m13) % p;
-    *x.get_unchecked_mut(i3) = ((m02 + p - m13) * tc) % p;
-}
-
-/// Forward radix-4 butterfly for the last pass (q = 1), where ta = tc = 1 so
-/// those multiplies vanish (only tb = w_4 remains).
-#[inline(always)]
-unsafe fn r4_dif_q1(x: &mut [u64; N], i0: usize, i1: usize, i2: usize, i3: usize, tb: u64, p: u64) {
-    let x0 = *x.get_unchecked(i0);
-    let x1 = *x.get_unchecked(i1);
-    let x2 = *x.get_unchecked(i2);
-    let x3 = *x.get_unchecked(i3);
-
-    let u = x0 + x2;
-    let v = x1 + x3;
-    // m02 = x0 + p - x2 stays lazy in (0, 2p): ta = 1 here, so it is not a product
-    // and feeds only output `% p` reductions.
-    let m02 = x0 + p - x2;
-    let m13 = ((x1 + p - x3) * tb) % p;
-
-    *x.get_unchecked_mut(i0) = (u + v) % p;
-    *x.get_unchecked_mut(i1) = (u + 2 * p - v) % p;
-    *x.get_unchecked_mut(i2) = (m02 + m13) % p;
-    *x.get_unchecked_mut(i3) = (m02 + 2 * p - m13) % p;
 }
 
 /// Reduce the eight radix-8 DIF outputs (three fused radix-2 DIF stages) of the
@@ -365,10 +316,55 @@ unsafe fn r8_dif_pre(src: &[u32; N], psi: &[u64; N], dst: &mut [u64; N],
              ra0, ra1, ra2, ra3, rb0, rb1, rc0, p);
 }
 
-/// Forward NTT of both multiply operands in lockstep. Uses two fused radix-8
-/// passes (the first folding in the psi pre-weight) followed by two fused radix-4
-/// passes: 4 memory passes covering all 10 radix-2 stages. The butterfly network
-/// is unchanged, so the output is in base-2 bit-reversed order.
+/// Fused radix-16 DIF butterfly (four combined radix-2 DIF stages, L = 8,4,2,1)
+/// on the 16-block at `base`. Twiddles are the constant 16th-root powers (the last
+/// stages do not depend on block position). Sums stay lazy across stages; the only
+/// multiplications are on differences bounded by < 8p, so products stay < 8p*p
+/// < 2^63 (the 16p values appear only in the final, multiply-free stage).
+#[inline(always)]
+unsafe fn r16_dif(x: &mut [u64; N], base: usize, w16: &[u64; 8], p: u64) {
+    let mut t = [0u64; 16];
+    let mut k = 0;
+    while k < 16 {
+        *t.get_unchecked_mut(k) = *x.get_unchecked(base + k);
+        k += 1;
+    }
+    // Stages with half-size h = 8, 4, 2, 1. Twiddle for position k is w16^{(8/h)*k};
+    // offset c = current value bound (a multiple of p) keeps the lazy diff positive.
+    let mut h = 8usize;
+    let mut c = p;
+    loop {
+        let tstep = 8 / h;
+        let mut start = 0usize;
+        while start < 16 {
+            let mut kk = 0usize;
+            while kk < h {
+                let u = *t.get_unchecked(start + kk);
+                let v = *t.get_unchecked(start + kk + h);
+                let tw = *w16.get_unchecked(tstep * kk);
+                *t.get_unchecked_mut(start + kk) = u + v;
+                *t.get_unchecked_mut(start + kk + h) = ((u + c - v) * tw) % p;
+                kk += 1;
+            }
+            start += 2 * h;
+        }
+        c <<= 1;
+        if h == 1 {
+            break;
+        }
+        h >>= 1;
+    }
+    let mut k = 0;
+    while k < 16 {
+        *x.get_unchecked_mut(base + k) = *t.get_unchecked(k) % p;
+        k += 1;
+    }
+}
+
+/// Forward NTT of both multiply operands in lockstep. Two fused radix-8 passes
+/// (the first folding in the psi pre-weight) then one fused radix-16 pass: 3 memory
+/// passes covering all 10 radix-2 stages. The butterfly network is unchanged, so the
+/// output is in base-2 bit-reversed order.
 /// Natural-order input -> bit-reversed-order output.
 #[inline(always)]
 fn ntt_dif2(a: &[u32; N], b: &[u32; N], fa: &mut [u64; N], fb: &mut [u64; N], t: &PrimeTables) {
@@ -426,37 +422,14 @@ fn ntt_dif2(a: &[u32; N], b: &[u32; N], fa: &mut [u64; N], fb: &mut [u64; N], t:
         }
         start += 8 * q8;
     }
-    // Passes 3 (q = 4) operate in place on the u64 buffers.
-    let mut q = N / 256;
-    while q > 1 {
-        let mut start = 0usize;
-        while start < N {
-            for j in 0..q {
-                unsafe {
-                    let ta = *t.ta.get_unchecked(q + j);
-                    let tb = *t.tb.get_unchecked(q + j);
-                    let tc = *t.tc.get_unchecked(q + j);
-                    let i0 = start + j;
-                    let i1 = i0 + q;
-                    let i2 = i1 + q;
-                    let i3 = i2 + q;
-                    r4_dif(fa, i0, i1, i2, i3, ta, tb, tc, p);
-                    r4_dif(fb, i0, i1, i2, i3, ta, tb, tc, p);
-                }
-            }
-            start += 4 * q;
+    // Final pass: one fused radix-16 DIF pass (stages L = 8,4,2,1) per 16-block.
+    let mut start = 0usize;
+    while start < N {
+        unsafe {
+            r16_dif(fa, start, &t.w16, p);
+            r16_dif(fb, start, &t.w16, p);
         }
-        q >>= 2;
-    }
-    // Last pass (q = 1): trivial twiddles ta = tc = 1.
-    unsafe {
-        let tb = *t.tb.get_unchecked(1);
-        let mut start = 0usize;
-        while start < N {
-            r4_dif_q1(fa, start, start + 1, start + 2, start + 3, tb, p);
-            r4_dif_q1(fb, start, start + 1, start + 2, start + 3, tb, p);
-            start += 4;
-        }
+        start += 16;
     }
 }
 
