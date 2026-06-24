@@ -54,6 +54,7 @@ struct PrimeTables {
     ws: [u32; N],    //   "  Shoup constant
     iw: [u32; N],    // w^{-e} inverse twiddle powers
     iws: [u32; N],   //   "  Shoup constant
+    pinv: u32,       // -p^{-1} mod 2^32, for the Montgomery pointwise product
 }
 
 /// Opaque plan holding precomputed tables (built once in `plan_new`, free).
@@ -142,12 +143,35 @@ fn red2p(a: u64, p: u64) -> u64 {
     }
 }
 
+/// Montgomery product (R = 2^32): returns a*b*R^{-1} mod p in [0,p), division-free.
+/// `pinv = -p^{-1} mod 2^32`. Inputs a,b < 2p < 2^32, so a*b < 4p^2 < p*R.
+#[inline(always)]
+fn mont_mul(a: u64, b: u64, p: u64, pinv: u32) -> u64 {
+    let t = a * b;
+    let m = (t as u32).wrapping_mul(pinv) as u64; // (t mod R) * (-p^{-1}) mod R
+    let r = (t + m * p) >> 32; // exact /R, result in [0,2p)
+    if r >= p {
+        r - p
+    } else {
+        r
+    }
+}
+
 fn build_tables(p: u64) -> PrimeTables {
     let psi_root = modpow(GEN, (p - 1) / (2 * N as u64), p);
     let w_root = (psi_root as u128 * psi_root as u128 % p as u128) as u64;
     let psi_inv = modinv(psi_root, p);
     let w_inv = modinv(w_root, p);
     let ninv = modinv(N as u64, p);
+    // Montgomery factor R = 2^32: the pre-weight bakes in R (so the spectral
+    // domain is in Montgomery form) and the post-weight bakes in R^{-1}.
+    let r_mod = ((1u128 << 32) % p as u128) as u64;
+    let rinv = modinv(r_mod, p);
+    // -p^{-1} mod 2^32 via Newton's iteration (1 -> 2 -> ... -> 32 correct bits).
+    let mut inv = 1u32;
+    for _ in 0..5 {
+        inv = inv.wrapping_mul(2u32.wrapping_sub((p as u32).wrapping_mul(inv)));
+    }
 
     let mut pt = PrimeTables {
         p,
@@ -159,16 +183,19 @@ fn build_tables(p: u64) -> PrimeTables {
         ws: [0; N],
         iw: [0; N],
         iws: [0; N],
+        pinv: inv.wrapping_neg(),
     };
 
     let mut acc = 1u64; // psi^j
     let mut iacc = 1u64; // psi^{-j}
     for j in 0..N {
-        pt.psi[j] = acc as u32;
-        pt.psis[j] = shoup_const(acc, p);
+        let pm = (acc as u128 * r_mod as u128 % p as u128) as u64; // psi^j * R  (Montgomery)
+        pt.psi[j] = pm as u32;
+        pt.psis[j] = shoup_const(pm, p);
         let ip = (iacc as u128 * ninv as u128 % p as u128) as u64; // psi^{-j} * N^{-1}
-        pt.ipsi[j] = ip as u32;
-        pt.ipsis[j] = shoup_const(ip, p);
+        let ipm = (ip as u128 * rinv as u128 % p as u128) as u64; //   * R^{-1} (de-Montgomery)
+        pt.ipsi[j] = ipm as u32;
+        pt.ipsis[j] = shoup_const(ipm, p);
         acc = (acc as u128 * psi_root as u128 % p as u128) as u64;
         iacc = (iacc as u128 * psi_inv as u128 % p as u128) as u64;
     }
@@ -320,10 +347,13 @@ fn convolve_mod(t: &PrimeTables, a: &[u32; N], b: &[u32; N]) -> [u64; N] {
     let p = t.p;
     let mut fa = fwd(a, t);
     let fb = fwd(b, t);
-    // Spectral pointwise product (both operands variable -> `%`).
+    // Spectral pointwise product. The domain is in Montgomery form (the psi
+    // pre-weight baked in R), so a division-free Montgomery multiply keeps it in
+    // Montgomery form; the ipsi post-weight (which baked in R^{-1}) converts out.
+    let pinv = t.pinv;
     unsafe {
         for i in 0..N {
-            *fa.get_unchecked_mut(i) = fa.get_unchecked(i) * fb.get_unchecked(i) % p;
+            *fa.get_unchecked_mut(i) = mont_mul(*fa.get_unchecked(i), *fb.get_unchecked(i), p, pinv);
         }
     }
     inv(fa, t)
