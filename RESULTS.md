@@ -3,7 +3,7 @@
 Leaderboard of recorded submissions. Full narratives live in
 [`history/entries/`](history/entries/).
 
-**Current record: 34777856** (@10d9e, entry 0024)
+**Current record: 32106560** (@10d9e, entry 0025)
 
 | # | date | author | SCORE | Δ vs record | commit | entry | note |
 |---|------|--------|-------|-------------|--------|-------|------|
@@ -31,3 +31,4 @@ Leaderboard of recorded submissions. Full narratives live in
 | 0022 | 2026-06-24 | @10d9e | 40565136 | +1328496 (no improvement) | `8f7db90` | [0022](history/entries/0022--10d9e.md) | Mirror the radix-16 forward on the inverse: fuse the inverse's first two radix-4… |
 | 0023 | 2026-06-24 | @10d9e | 37923024 | -1313616 (new record) | `530fc28` | [0023](history/entries/0023--10d9e.md) | In both radix-16 passes the first butterfly of every block (kk=0) has twiddle w1… |
 | 0024 | 2026-06-24 | @10d9e | 34777856 | -3145168 (new record) | `d1743eb` | [0024](history/entries/0024--10d9e.md) | Division-free Shoup-NTT (radix-4): every constant modular multiply (twiddles, p… |
+| 0025 | 2026-06-24 | @10d9e | 32106560 | -2671296 (new record) | `2729e7d` | [0025](history/entries/0025--10d9e.md) | Lazy Harvey-style Shoup butterflies (radix-4): keep values in [0,2p), twiddle multiplies use a lazy Shoup with no fina… |
