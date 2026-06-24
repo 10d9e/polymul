@@ -7,8 +7,8 @@ changing anything.
 
 ## The objective
 
-Minimize **SCORE = WORK** (deterministic wasm fuel over the fixed fixture
-corpus), as reported by:
+Minimize **SCORE = WORK** (deterministic weighted wasm compute cost over the
+fixed fixture corpus), as reported by:
 
 ```
 bash scripts/evaluate.sh
@@ -22,9 +22,25 @@ Measure WORK directly:
 bash scripts/measure-complexity.sh
 ```
 
-WORK is deterministic wasm fuel — the count of executed operators while
-running `bench_polymul` on fixed fixture pairs. Lower is faster. The metric
-lives outside `src/algorithm/` and cannot be gamed.
+WORK is a deterministic, **weighted** compute cost: each executed wasm operator
+is charged a weight reflecting its real hardware cost while running
+`bench_polymul` on fixed fixture pairs. Lower is faster. The weights are roughly
+proportional to instruction latency/throughput:
+
+| operator class | weight |
+|---|---|
+| integer `div`/`rem` (i64) | 25 |
+| integer `div`/`rem` (i32) | 15 |
+| multiply (incl. SIMD lanes) | 3 |
+| load / store | 2 |
+| add/sub/shift/bitwise/compare (incl. SIMD ALU, per instruction) | 1 |
+| const / `local.*` / `global.*` / block / loop / if / drop | 0 |
+
+So a hardware integer divide is charged ~25× an add (it is that expensive on
+real silicon), and a `v128` lane op is charged the same as its scalar form —
+i.e. 2–4× the throughput. Register/stack bookkeeping is free. The host
+instruments the (frozen, out-of-tree) wasm at load time, so the measurement is
+deterministic and lives outside `src/algorithm/` — it cannot be gamed.
 
 ## The one hard invariant (non-negotiable)
 

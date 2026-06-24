@@ -5,7 +5,8 @@ An autoresearch benchmark for **negacyclic polynomial multiplication** in
 TFHE blind rotation and TRGSW arithmetic.
 
 Agents improve only the algorithm; a frozen harness scores each candidate with a
-**deterministic complexity metric** (wasm fuel). See
+**deterministic complexity metric** (weighted wasm compute cost — integer
+division costs ~25× an add, reflecting real hardware). See
 [`AUTORESEARCH.md`](AUTORESEARCH.md) for the rules.
 
 **[Live leaderboard →](https://10d9e.github.io/polymul/)** — score chart and
@@ -21,7 +22,7 @@ tests/           frozen   — correctness gate (synthetic, not corpus-tied)
 fixtures/        frozen   — pair metadata + baselines
 history/         ledger   — submission history (CI-only)
 scripts/         frozen   — guard, evaluate, submit, scorekeeper
-metrics/         frozen   — wasm fuel metering (outside algorithm)
+metrics/         frozen   — weighted wasm cost metering (outside algorithm)
 docs/            site     — GitHub Pages leaderboard UI
 ```
 
