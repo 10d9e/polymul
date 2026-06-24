@@ -387,12 +387,91 @@ unsafe fn twiddles3(w: &[u32; N], ws: &[u32; N], e: usize) -> (u32, u32, u32, u3
     }
 }
 
-/// Inverse radix-4 DIT, digit-reversed -> natural. Lazy: values in [0, 2p). Applies
-/// inverse twiddles to the high inputs (lazy Shoup), then the inverse 4-point DFT
-/// (J = w^{-N/4} = I^{-1}).
+/// One inverse radix-4 DIT butterfly on four values (lazy, in/out [0,2p)).
+/// Applies the inverse twiddles to b,c,d then the inverse 4-point DFT (root J).
+/// Returns outputs for offsets +0, +len, +2len, +3len. `triv` skips twiddles.
+#[allow(clippy::too_many_arguments)]
+#[inline(always)]
+fn r4_lazy_dit(
+    a: u64, mut b: u64, mut c: u64, mut d: u64, p: u64, p2: u64, jc: u32, jcs: u32, triv: bool,
+    t1c: u32, t1s: u32, t2c: u32, t2s: u32, t3c: u32, t3s: u32,
+) -> (u64, u64, u64, u64) {
+    if !triv {
+        b = shoup_lazy(b, t1c, t1s, p);
+        c = shoup_lazy(c, t2c, t2s, p);
+        d = shoup_lazy(d, t3c, t3s, p);
+    }
+    let s0 = red2p(a + c, p);
+    let s1 = red2p(a + p2 - c, p);
+    let s2 = red2p(b + d, p);
+    let s3 = red2p(b + p2 - d, p);
+    let js3 = shoup_lazy(s3, jc, jcs, p);
+    (
+        red2p(s0 + s2, p),
+        red2p(s1 + js3, p),
+        red2p(s0 + p2 - s2, p),
+        red2p(s1 + p2 - js3, p),
+    )
+}
+
+/// Fused first two inverse DIT stages (half-block sizes 1 then 4) on one contiguous
+/// 16-element tile in registers — one memory pass instead of two. The second fused
+/// stage uses the inverse 16th-root twiddles iw^{64*g} (already in the `iw` table).
+#[inline(always)]
+fn dit4_first16(x: &mut [u64; N], iw: &[u32; N], iws: &[u32; N], jc: u32, jcs: u32, p: u64) {
+    let p2 = p << 1;
+    let mut i = 0;
+    while i < N {
+        let mut t = [0u64; 16];
+        unsafe {
+            for k in 0..16 {
+                *t.get_unchecked_mut(k) = *x.get_unchecked(i + k);
+            }
+            // half-block size 1: groups (4h..4h+3), trivial twiddles.
+            for h in 0..4 {
+                let b4 = 4 * h;
+                let (o0, o1, o2, o3) = r4_lazy_dit(
+                    *t.get_unchecked(b4),
+                    *t.get_unchecked(b4 + 1),
+                    *t.get_unchecked(b4 + 2),
+                    *t.get_unchecked(b4 + 3),
+                    p, p2, jc, jcs, true, 0, 0, 0, 0, 0, 0,
+                );
+                *t.get_unchecked_mut(b4) = o0;
+                *t.get_unchecked_mut(b4 + 1) = o1;
+                *t.get_unchecked_mut(b4 + 2) = o2;
+                *t.get_unchecked_mut(b4 + 3) = o3;
+            }
+            // half-block size 4: groups (g, g+4, g+8, g+12), twiddle exponent e = 64*g.
+            for g in 0..4 {
+                let e = 64 * g;
+                let (it1c, it1s, it2c, it2s, it3c, it3s) = twiddles3(iw, iws, e);
+                let (o0, o1, o2, o3) = r4_lazy_dit(
+                    *t.get_unchecked(g),
+                    *t.get_unchecked(g + 4),
+                    *t.get_unchecked(g + 8),
+                    *t.get_unchecked(g + 12),
+                    p, p2, jc, jcs, e == 0, it1c, it1s, it2c, it2s, it3c, it3s,
+                );
+                *t.get_unchecked_mut(g) = o0;
+                *t.get_unchecked_mut(g + 4) = o1;
+                *t.get_unchecked_mut(g + 8) = o2;
+                *t.get_unchecked_mut(g + 12) = o3;
+            }
+            for k in 0..16 {
+                *x.get_unchecked_mut(i + k) = *t.get_unchecked(k);
+            }
+        }
+        i += 16;
+    }
+}
+
+/// Inverse radix-4 DIT, digit-reversed -> natural. Lazy: values in [0, 2p). The
+/// first two stages (contiguous 16-element blocks) are fused into one register pass.
 #[inline(always)]
 fn dit4(x: &mut [u64; N], iw: &[u32; N], iws: &[u32; N], jc: u32, jcs: u32, p: u64) {
-    let mut len = 1;
+    dit4_first16(x, iw, iws, jc, jcs, p);
+    let mut len = 16;
     while len < N {
         let step = N / (4 * len);
         let p2 = p << 1;
