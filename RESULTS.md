@@ -3,7 +3,7 @@
 Leaderboard of recorded submissions. Full narratives live in
 [`history/entries/`](history/entries/).
 
-**Current record: 28234192** (@10d9e, entry 0011)
+**Current record: 27394768** (@10d9e, entry 0012)
 
 | # | date | author | SCORE | Δ vs record | commit | entry | note |
 |---|------|--------|-------|-------------|--------|-------|------|
@@ -18,3 +18,4 @@ Leaderboard of recorded submissions. Full narratives live in
 | 0009 | 2026-06-24 | @10d9e | 33109360 | -32768 (new record) | `3f2e4ed` | [0009](history/entries/0009--10d9e.md) | In the Garner CRT step, v0 = r0[j] is already a residue mod P0, and P0 < P1, so … |
 | 0010 | 2026-06-24 | @10d9e | 29177200 | -3932160 (new record) | `5ad35c6` | [0010](history/entries/0010--10d9e.md) | In the fused radix-4 forward butterfly, several intermediate difference terms (x… |
 | 0011 | 2026-06-24 | @10d9e | 28234192 | -943008 (new record) | `dfaaa90` | [0011](history/entries/0011--10d9e.md) | Mirror the forward lazy-reduction change in the inverse DIT butterfly. The terms… |
+| 0012 | 2026-06-24 | @10d9e | 27394768 | -839424 (new record) | `a8510ec` | [0012](history/entries/0012--10d9e.md) | In the radix-4 fused transforms the q=1 pass has ta=tc=1 (forward) and ita=itc=1… |
