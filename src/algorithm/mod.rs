@@ -285,15 +285,16 @@ fn intt_dit(a: &mut [u64; N], b: &[u64; N], t: &PrimeTables) {
             let x2 = (*a.get_unchecked(i2) * *b.get_unchecked(i2)) % p;
             let x3 = (*a.get_unchecked(i3) * *b.get_unchecked(i3)) % p;
 
-            // v1 = x1, v3 = x3 (wc = 1); va = (x2 + x3) mod p (wa = 1).
-            let p0 = { let s = x0 + x1; if s >= p { s - p } else { s } };
-            let p1 = { let d = x0 + p - x1; if d >= p { d - p } else { d } };
-            let va = { let s = x2 + x3; if s >= p { s - p } else { s } };
+            // v1 = x1, v3 = x3 (wc = 1); va = x2 + x3 (wa = 1) kept lazy in [0, 2p);
+            // p0, p1 also lazy. Output reductions handle everything.
+            let p0 = x0 + x1;
+            let p1 = x0 + p - x1;
+            let va = x2 + x3;
             let vb = ((x2 + p - x3) * wb) % p;
-            *a.get_unchecked_mut(i0) = { let s = p0 + va; if s >= p { s - p } else { s } };
-            *a.get_unchecked_mut(i2) = { let d = p0 + p - va; if d >= p { d - p } else { d } };
-            *a.get_unchecked_mut(i1) = { let s = p1 + vb; if s >= p { s - p } else { s } };
-            *a.get_unchecked_mut(i3) = { let d = p1 + p - vb; if d >= p { d - p } else { d } };
+            *a.get_unchecked_mut(i0) = (p0 + va) % p;
+            *a.get_unchecked_mut(i2) = (p0 + 2 * p - va) % p;
+            *a.get_unchecked_mut(i1) = (p1 + vb) % p;
+            *a.get_unchecked_mut(i3) = (p1 + p - vb) % p;
             start += 4;
         }
     }
@@ -320,15 +321,15 @@ fn intt_dit(a: &mut [u64; N], b: &[u64; N], t: &PrimeTables) {
 
                     let v1 = (x1 * wc) % p;
                     let v3 = (x3 * wc) % p;
-                    let p0 = { let s = x0 + v1; if s >= p { s - p } else { s } };
-                    let p1 = { let d = x0 + p - v1; if d >= p { d - p } else { d } };
-                    // p2/p3 feed only the multiplies; % p reduces them fully.
+                    // p0, p1 stay lazily in [0, 2p): they feed only output `% p`.
+                    let p0 = x0 + v1;
+                    let p1 = x0 + p - v1;
                     let va = ((x2 + v3) * wa) % p;
                     let vb = ((x2 + p - v3) * wb) % p;
-                    *a.get_unchecked_mut(i0) = { let s = p0 + va; if s >= p { s - p } else { s } };
-                    *a.get_unchecked_mut(i2) = { let d = p0 + p - va; if d >= p { d - p } else { d } };
-                    *a.get_unchecked_mut(i1) = { let s = p1 + vb; if s >= p { s - p } else { s } };
-                    *a.get_unchecked_mut(i3) = { let d = p1 + p - vb; if d >= p { d - p } else { d } };
+                    *a.get_unchecked_mut(i0) = (p0 + va) % p;
+                    *a.get_unchecked_mut(i2) = (p0 + p - va) % p;
+                    *a.get_unchecked_mut(i1) = (p1 + vb) % p;
+                    *a.get_unchecked_mut(i3) = (p1 + p - vb) % p;
                 }
             }
             start += 4 * q;
@@ -356,20 +357,16 @@ fn intt_dit(a: &mut [u64; N], b: &[u64; N], t: &PrimeTables) {
 
             let v1 = (x1 * wc) % p;
             let v3 = (x3 * wc) % p;
-            let p0 = { let s = x0 + v1; if s >= p { s - p } else { s } };
-            let p1 = { let d = x0 + p - v1; if d >= p { d - p } else { d } };
-            // p2 = x2+v3 and p3 = x2+p-v3 feed only the multiplies, so % p reduces
-            // them fully -- no separate conditional subtraction needed.
+            // p0, p1 and the outputs o0..o3 all stay lazy: each output feeds a
+            // final `* ipsi % p`, which reduces the whole thing.
+            let p0 = x0 + v1;
+            let p1 = x0 + p - v1;
             let va = ((x2 + v3) * wa) % p;
             let vb = ((x2 + p - v3) * wb) % p;
-            let o0 = { let s = p0 + va; if s >= p { s - p } else { s } };
-            let o2 = { let d = p0 + p - va; if d >= p { d - p } else { d } };
-            let o1 = { let s = p1 + vb; if s >= p { s - p } else { s } };
-            let o3 = { let d = p1 + p - vb; if d >= p { d - p } else { d } };
-            *a.get_unchecked_mut(i0) = (o0 * *t.ipsi.get_unchecked(i0)) % p;
-            *a.get_unchecked_mut(i2) = (o2 * *t.ipsi.get_unchecked(i2)) % p;
-            *a.get_unchecked_mut(i1) = (o1 * *t.ipsi.get_unchecked(i1)) % p;
-            *a.get_unchecked_mut(i3) = (o3 * *t.ipsi.get_unchecked(i3)) % p;
+            *a.get_unchecked_mut(i0) = ((p0 + va) * *t.ipsi.get_unchecked(i0)) % p;
+            *a.get_unchecked_mut(i2) = ((p0 + p - va) * *t.ipsi.get_unchecked(i2)) % p;
+            *a.get_unchecked_mut(i1) = ((p1 + vb) * *t.ipsi.get_unchecked(i1)) % p;
+            *a.get_unchecked_mut(i3) = ((p1 + p - vb) * *t.ipsi.get_unchecked(i3)) % p;
         }
     }
 }
