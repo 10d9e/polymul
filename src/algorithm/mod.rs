@@ -55,11 +55,6 @@ struct PrimeTables {
     rb0: [u64; R8N],
     rb1: [u64; R8N],
     rc0: [u64; R8N],
-    // Inverse radix-4 (two fused DIT stages) twiddles, indexed [q + j].
-    // ita = w_{4q}^{-j}, itb = w_{4q}^{-(j+q)}, itc = w_{2q}^{-j} = ita^2.
-    ita: [u64; N],
-    itb: [u64; N],
-    itc: [u64; N],
     // Inverse radix-8 (three fused DIT stages) twiddles, indexed [q8 + j].
     ica0: [u64; R8N],
     ica1: [u64; R8N],
@@ -71,6 +66,8 @@ struct PrimeTables {
     // Powers w16^0..w16^7 of the 16th root of unity (forward), used by the fused
     // radix-16 last pass (constant twiddles for stages L = 8,4,2,1).
     w16: [u64; 8],
+    // Powers w16^{-0}..w16^{-7} (inverse), for the fused radix-16 inverse first pass.
+    iw16: [u64; 8],
 }
 
 /// Opaque plan holding precomputed tables (built once in `plan_new`, free).
@@ -123,28 +120,6 @@ fn build_tables(p: u64) -> PrimeTables {
         ipsi[j] = (iacc as u128 * ninv as u128 % p as u128) as u64;
         acc = (acc as u128 * psi_root as u128 % p as u128) as u64;
         iacc = (iacc as u128 * psi_inv as u128 % p as u128) as u64;
-    }
-
-    // Inverse radix-4 twiddles (the inverse still uses two radix-4 DIT passes),
-    // for quarter-blocks of size q in {1, 4}.
-    let i4i = modpow(wi_root, (N / 4) as u64, p); // w_4^{-1}
-    let mut ita = [0u64; N];
-    let mut itb = [0u64; N];
-    let mut itc = [0u64; N];
-    let mut q = N / 4;
-    loop {
-        let wir = modpow(wi_root, (N / (4 * q)) as u64, p); // w_{4q}^{-1}
-        let mut ai_j = 1u64; // w_{4q}^{-j}
-        for j in 0..q {
-            ita[q + j] = ai_j;
-            itb[q + j] = (ai_j as u128 * i4i as u128 % p as u128) as u64;
-            itc[q + j] = (ai_j as u128 * ai_j as u128 % p as u128) as u64;
-            ai_j = (ai_j as u128 * wir as u128 % p as u128) as u64;
-        }
-        if q == 1 {
-            break;
-        }
-        q >>= 2;
     }
 
     // Forward radix-8 twiddles for the first two passes (q8 = N/8, N/64).
@@ -223,20 +198,25 @@ fn build_tables(p: u64) -> PrimeTables {
         q8 *= 8;
     }
 
-    // 16th-root powers for the fused radix-16 last forward pass.
+    // 16th-root powers for the fused radix-16 passes (forward and inverse).
     let w16r = modpow(w_root, (N / 16) as u64, p);
+    let iw16r = modpow(wi_root, (N / 16) as u64, p);
     let mut w16 = [0u64; 8];
+    let mut iw16 = [0u64; 8];
     let mut wacc = 1u64;
+    let mut iwacc = 1u64;
     for k in 0..8 {
         w16[k] = wacc;
+        iw16[k] = iwacc;
         wacc = (wacc as u128 * w16r as u128 % p as u128) as u64;
+        iwacc = (iwacc as u128 * iw16r as u128 % p as u128) as u64;
     }
 
     PrimeTables {
-        p, psi, ipsi, ita, itb, itc,
+        p, psi, ipsi,
         ra0, ra1, ra2, ra3, rb0, rb1, rc0,
         ica0, ica1, ica2, ica3, icb0, icb1, icc0,
-        w16,
+        w16, iw16,
     }
 }
 
@@ -544,78 +524,62 @@ unsafe fn r8_dit_post(x: &mut [u64; N], ipsi: &[u64; N],
     *x.get_unchecked_mut(i7) = ((q3 + p - u7) * *ipsi.get_unchecked(i7)) % p;
 }
 
-/// Inverse NTT: two fused radix-4 DIT passes (the first folding in the pointwise
-/// product) followed by two fused radix-8 DIT passes (the last folding in the
-/// psi^{-j}*N^{-1} post-weight) — 4 memory passes covering all 10 radix-2 stages.
+/// Fused radix-16 DIT first inverse pass (stages L = 1,2,4,8) over a 16-block,
+/// folding in the pointwise product a[i] *= b[i]. Constant inverse-16th-root
+/// twiddles. In DIT only the (reduced) upper operand is multiplied, so values grow
+/// only linearly (< 5p) and every product stays < 4p*p < 2^62.
+#[inline(always)]
+unsafe fn r16_dit_pw(a: &mut [u64; N], b: &[u64; N], base: usize, iw16: &[u64; 8], p: u64) {
+    let mut t = [0u64; 16];
+    let mut k = 0;
+    while k < 16 {
+        *t.get_unchecked_mut(k) = (*a.get_unchecked(base + k) * *b.get_unchecked(base + k)) % p;
+        k += 1;
+    }
+    let mut h = 1usize;
+    loop {
+        let tstep = 8 / h;
+        let mut start = 0usize;
+        while start < 16 {
+            let mut kk = 0usize;
+            while kk < h {
+                let tw = *iw16.get_unchecked(tstep * kk);
+                let u = *t.get_unchecked(start + kk);
+                let v = (*t.get_unchecked(start + kk + h) * tw) % p;
+                *t.get_unchecked_mut(start + kk) = u + v;
+                *t.get_unchecked_mut(start + kk + h) = u + p - v;
+                kk += 1;
+            }
+            start += 2 * h;
+        }
+        if h == 8 {
+            break;
+        }
+        h <<= 1;
+    }
+    let mut k = 0;
+    while k < 16 {
+        *a.get_unchecked_mut(base + k) = *t.get_unchecked(k) % p;
+        k += 1;
+    }
+}
+
+/// Inverse NTT: one fused radix-16 DIT pass (folding in the pointwise product),
+/// then two fused radix-8 DIT passes (the last folding in the psi^{-j}*N^{-1}
+/// post-weight) — 3 memory passes covering all 10 radix-2 stages.
 /// Bit-reversed-order input -> natural-order output. Inverse of `ntt_dif2`'s
 /// per-array transform.
 #[inline(always)]
 fn intt_dit(a: &mut [u64; N], b: &[u64; N], t: &PrimeTables) {
     let p = t.p;
-    // First pass (q = 1): fold in the pointwise product a[i] *= b[i]. Here the
-    // twiddles ita[1] = itc[1] = 1 (only itb[1] = w_4^{-1} is nontrivial), so the
-    // v1/v3 weighting and the va multiply collapse away.
-    unsafe {
-        let wb = *t.itb.get_unchecked(1);
-        let mut start = 0usize;
-        while start < N {
-            let i0 = start;
-            let i1 = start + 1;
-            let i2 = start + 2;
-            let i3 = start + 3;
-            let x0 = (*a.get_unchecked(i0) * *b.get_unchecked(i0)) % p;
-            let x1 = (*a.get_unchecked(i1) * *b.get_unchecked(i1)) % p;
-            let x2 = (*a.get_unchecked(i2) * *b.get_unchecked(i2)) % p;
-            let x3 = (*a.get_unchecked(i3) * *b.get_unchecked(i3)) % p;
-
-            // v1 = x1, v3 = x3 (wc = 1); va = x2 + x3 (wa = 1) kept lazy in [0, 2p);
-            // p0, p1 also lazy. Output reductions handle everything.
-            let p0 = x0 + x1;
-            let p1 = x0 + p - x1;
-            let va = x2 + x3;
-            let vb = ((x2 + p - x3) * wb) % p;
-            *a.get_unchecked_mut(i0) = (p0 + va) % p;
-            *a.get_unchecked_mut(i2) = (p0 + 2 * p - va) % p;
-            *a.get_unchecked_mut(i1) = (p1 + vb) % p;
-            *a.get_unchecked_mut(i3) = (p1 + p - vb) % p;
-            start += 4;
+    // First pass: one fused radix-16 DIT pass (stages L = 1,2,4,8), folding in the
+    // pointwise product a[i] *= b[i].
+    let mut start = 0usize;
+    while start < N {
+        unsafe {
+            r16_dit_pw(a, b, start, &t.iw16, p);
         }
-    }
-
-    // Pass 2 (q = 4): radix-4 DIT.
-    {
-        let q = 4usize;
-        let mut start = 0usize;
-        while start < N {
-            for j in 0..q {
-                unsafe {
-                    let wa = *t.ita.get_unchecked(q + j);
-                    let wb = *t.itb.get_unchecked(q + j);
-                    let wc = *t.itc.get_unchecked(q + j);
-                    let i0 = start + j;
-                    let i1 = i0 + q;
-                    let i2 = i1 + q;
-                    let i3 = i2 + q;
-
-                    let x0 = *a.get_unchecked(i0);
-                    let x1 = *a.get_unchecked(i1);
-                    let x2 = *a.get_unchecked(i2);
-                    let x3 = *a.get_unchecked(i3);
-
-                    let v1 = (x1 * wc) % p;
-                    let v3 = (x3 * wc) % p;
-                    let p0 = x0 + v1;
-                    let p1 = x0 + p - v1;
-                    let va = ((x2 + v3) * wa) % p;
-                    let vb = ((x2 + p - v3) * wb) % p;
-                    *a.get_unchecked_mut(i0) = (p0 + va) % p;
-                    *a.get_unchecked_mut(i2) = (p0 + p - va) % p;
-                    *a.get_unchecked_mut(i1) = (p1 + vb) % p;
-                    *a.get_unchecked_mut(i3) = (p1 + p - vb) % p;
-                }
-            }
-            start += 4 * q;
-        }
+        start += 16;
     }
 
     // Pass 3 (q8 = N/64): radix-8 DIT (stages L = 16, 32, 64).
