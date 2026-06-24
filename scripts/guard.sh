@@ -28,7 +28,7 @@ fi
 
 if ! grep -q 'pub struct Plan;' src/algorithm/mod.rs \
   || ! grep -q 'pub fn plan_new() -> Plan;' src/algorithm/mod.rs \
-  || ! grep -q 'pub fn poly_mul(plan: &mut Plan, a: &\[u32; 1024\], b: &\[u32; 1024\]) -> \[u32; 1024\];' src/algorithm/mod.rs; then
+  || ! grep -q 'pub fn poly_mul(plan: &mut Plan, a: &\[u32; 1024\], b: &\[u32; 1024\]) -> \[u32; 1024\]' src/algorithm/mod.rs; then
   echo "BOUNDARY VIOLATION — frozen Plan/plan_new/poly_mul signatures were changed."
   exit 1
 fi
