@@ -41,12 +41,16 @@ struct PrimeTables {
     p: u64,
     psi: [u64; N],  // psi^j           (pre-weight)
     ipsi: [u64; N], // psi^{-j} * N^-1 (post-weight, folds inverse-transform scale)
-    itw: [u64; N],  // inverse (DIT) twiddles: itw[len + j] = w_N^{-(j * N/(2*len))}
     // Forward radix-4 (two fused DIF stages) twiddles, indexed [q + j] where q is
     // the quarter-block size. ta = w_{4q}^j, tb = ta*w_4, tc = ta^2.
     ta: [u64; N],
     tb: [u64; N],
     tc: [u64; N],
+    // Inverse radix-4 (two fused DIT stages) twiddles, indexed [q + j].
+    // ita = w_{4q}^{-j}, itb = w_{4q}^{-(j+q)}, itc = w_{2q}^{-j} = ita^2.
+    ita: [u64; N],
+    itb: [u64; N],
+    itc: [u64; N],
 }
 
 /// Opaque plan holding precomputed tables (built once in `plan_new`, free).
@@ -101,35 +105,31 @@ fn build_tables(p: u64) -> PrimeTables {
         iacc = (iacc as u128 * psi_inv as u128 % p as u128) as u64;
     }
 
-    // Inverse radix-2 DIT stage twiddles, indexed [len + j], len = half-size.
-    let mut itw = [0u64; N];
-    let mut len = 1usize;
-    while len < N {
-        let step = (N / (2 * len)) as u64;
-        let wir = modpow(wi_root, step, p);
-        let mut wij = 1u64;
-        for j in 0..len {
-            itw[len + j] = wij;
-            wij = (wij as u128 * wir as u128 % p as u128) as u64;
-        }
-        len <<= 1;
-    }
-
-    // Forward radix-4 twiddles: each fused pass combines two radix-2 DIF stages,
-    // processing quarter-blocks of size q for q in {N/4, N/16, ..., 1}.
+    // Radix-4 twiddles: each fused pass combines two radix-2 stages, processing
+    // quarter-blocks of size q for q in {N/4, N/16, ..., 1}.
     let i4 = modpow(w_root, (N / 4) as u64, p); // w_4 = primitive 4th root
+    let i4i = modpow(wi_root, (N / 4) as u64, p); // w_4^{-1}
     let mut ta = [0u64; N];
     let mut tb = [0u64; N];
     let mut tc = [0u64; N];
+    let mut ita = [0u64; N];
+    let mut itb = [0u64; N];
+    let mut itc = [0u64; N];
     let mut q = N / 4;
     loop {
         let wr = modpow(w_root, (N / (4 * q)) as u64, p); // w_{4q}
+        let wir = modpow(wi_root, (N / (4 * q)) as u64, p); // w_{4q}^{-1}
         let mut a_j = 1u64; // w_{4q}^j
+        let mut ai_j = 1u64; // w_{4q}^{-j}
         for j in 0..q {
             ta[q + j] = a_j;
             tb[q + j] = (a_j as u128 * i4 as u128 % p as u128) as u64;
             tc[q + j] = (a_j as u128 * a_j as u128 % p as u128) as u64;
+            ita[q + j] = ai_j;
+            itb[q + j] = (ai_j as u128 * i4i as u128 % p as u128) as u64;
+            itc[q + j] = (ai_j as u128 * ai_j as u128 % p as u128) as u64;
             a_j = (a_j as u128 * wr as u128 % p as u128) as u64;
+            ai_j = (ai_j as u128 * wir as u128 % p as u128) as u64;
         }
         if q == 1 {
             break;
@@ -137,7 +137,7 @@ fn build_tables(p: u64) -> PrimeTables {
         q >>= 2;
     }
 
-    PrimeTables { p, psi, ipsi, itw, ta, tb, tc }
+    PrimeTables { p, psi, ipsi, ta, tb, tc, ita, itb, itc }
 }
 
 /// One fused radix-4 DIF butterfly (two combined radix-2 DIF stages) on the four
@@ -198,29 +198,54 @@ fn ntt_dif2(a: &mut [u64; N], b: &mut [u64; N], t: &PrimeTables) {
     }
 }
 
-/// Inverse NTT, decimation-in-time (Cooley–Tukey).
-/// Bit-reversed-order input -> natural-order output.
+/// Inverse NTT using fused radix-4 DIT passes (5 passes instead of 10).
+/// Bit-reversed-order input -> natural-order output. Inverse of `ntt_dif2`'s
+/// per-array transform.
 #[inline(always)]
 fn intt_dit(a: &mut [u64; N], t: &PrimeTables) {
     let p = t.p;
-    let mut len = 1usize;
-    while len < N {
+    let mut q = 1usize;
+    loop {
         let mut start = 0usize;
         while start < N {
-            let base = len;
-            for j in 0..len {
+            for j in 0..q {
                 unsafe {
-                    let u = *a.get_unchecked(start + j);
-                    let v = (*a.get_unchecked(start + j + len) * *t.itw.get_unchecked(base + j)) % p;
-                    let s = u + v;
-                    *a.get_unchecked_mut(start + j) = if s >= p { s - p } else { s };
-                    let d = u + p - v;
-                    *a.get_unchecked_mut(start + j + len) = if d >= p { d - p } else { d };
+                    let wa = *t.ita.get_unchecked(q + j);
+                    let wb = *t.itb.get_unchecked(q + j);
+                    let wc = *t.itc.get_unchecked(q + j);
+                    let i0 = start + j;
+                    let i1 = i0 + q;
+                    let i2 = i1 + q;
+                    let i3 = i2 + q;
+
+                    let x0 = *a.get_unchecked(i0);
+                    let x1 = *a.get_unchecked(i1);
+                    let x2 = *a.get_unchecked(i2);
+                    let x3 = *a.get_unchecked(i3);
+
+                    // first DIT stage (half-size q)
+                    let v1 = (x1 * wc) % p;
+                    let v3 = (x3 * wc) % p;
+                    let p0 = { let s = x0 + v1; if s >= p { s - p } else { s } };
+                    let p1 = { let d = x0 + p - v1; if d >= p { d - p } else { d } };
+                    let p2 = { let s = x2 + v3; if s >= p { s - p } else { s } };
+                    let p3 = { let d = x2 + p - v3; if d >= p { d - p } else { d } };
+
+                    // second DIT stage (half-size 2q)
+                    let va = (p2 * wa) % p;
+                    let vb = (p3 * wb) % p;
+                    *a.get_unchecked_mut(i0) = { let s = p0 + va; if s >= p { s - p } else { s } };
+                    *a.get_unchecked_mut(i2) = { let d = p0 + p - va; if d >= p { d - p } else { d } };
+                    *a.get_unchecked_mut(i1) = { let s = p1 + vb; if s >= p { s - p } else { s } };
+                    *a.get_unchecked_mut(i3) = { let d = p1 + p - vb; if d >= p { d - p } else { d } };
                 }
             }
-            start += 2 * len;
+            start += 4 * q;
         }
-        len <<= 1;
+        if q == N / 4 {
+            break;
+        }
+        q <<= 2;
     }
 }
 
