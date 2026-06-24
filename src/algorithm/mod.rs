@@ -165,14 +165,54 @@ unsafe fn r4_dif(x: &mut [u64; N], i0: usize, i1: usize, i2: usize, i3: usize,
     *x.get_unchecked_mut(i3) = ({ let d = m02 + p - m13; if d >= p { d - p } else { d } } * tc) % p;
 }
 
-/// Forward NTT applied to two arrays in lockstep, using fused radix-4 passes
-/// (5 passes instead of 10) to halve memory traffic; shares twiddle loads
-/// between the two operands of the multiply.
+/// First fused radix-4 DIF butterfly that also applies the negacyclic pre-weight
+/// psi^i on the fly, reading the raw u32 input and writing the u64 transform
+/// buffer. Folds the separate pre-weight pass into the first forward pass.
+#[inline(always)]
+unsafe fn r4_dif_pre(src: &[u32; N], psi: &[u64; N], dst: &mut [u64; N],
+                     i0: usize, i1: usize, i2: usize, i3: usize,
+                     ta: u64, tb: u64, tc: u64, p: u64) {
+    let x0 = (*src.get_unchecked(i0) as u64 * *psi.get_unchecked(i0)) % p;
+    let x1 = (*src.get_unchecked(i1) as u64 * *psi.get_unchecked(i1)) % p;
+    let x2 = (*src.get_unchecked(i2) as u64 * *psi.get_unchecked(i2)) % p;
+    let x3 = (*src.get_unchecked(i3) as u64 * *psi.get_unchecked(i3)) % p;
+
+    let s02 = { let s = x0 + x2; if s >= p { s - p } else { s } };
+    let s13 = { let s = x1 + x3; if s >= p { s - p } else { s } };
+    let d02 = { let d = x0 + p - x2; if d >= p { d - p } else { d } };
+    let d13 = { let d = x1 + p - x3; if d >= p { d - p } else { d } };
+    let m02 = (d02 * ta) % p;
+    let m13 = (d13 * tb) % p;
+
+    *dst.get_unchecked_mut(i0) = { let s = s02 + s13; if s >= p { s - p } else { s } };
+    *dst.get_unchecked_mut(i1) = ({ let d = s02 + p - s13; if d >= p { d - p } else { d } } * tc) % p;
+    *dst.get_unchecked_mut(i2) = { let s = m02 + m13; if s >= p { s - p } else { s } };
+    *dst.get_unchecked_mut(i3) = ({ let d = m02 + p - m13; if d >= p { d - p } else { d } } * tc) % p;
+}
+
+/// Forward NTT of both multiply operands in lockstep, using fused radix-4 passes
+/// (5 passes instead of 10). The negacyclic pre-weight psi^i is folded into the
+/// first pass, so the raw u32 inputs are consumed directly into the u64 buffers.
 /// Natural-order input -> bit-reversed-order output.
 #[inline(always)]
-fn ntt_dif2(a: &mut [u64; N], b: &mut [u64; N], t: &PrimeTables) {
+fn ntt_dif2(a: &[u32; N], b: &[u32; N], fa: &mut [u64; N], fb: &mut [u64; N], t: &PrimeTables) {
     let p = t.p;
-    let mut q = N / 4;
+    // First pass (q = N/4, single block) folds in the psi pre-weight.
+    let q0 = N / 4;
+    for j in 0..q0 {
+        unsafe {
+            let ta = *t.ta.get_unchecked(q0 + j);
+            let tb = *t.tb.get_unchecked(q0 + j);
+            let tc = *t.tc.get_unchecked(q0 + j);
+            let i1 = j + q0;
+            let i2 = i1 + q0;
+            let i3 = i2 + q0;
+            r4_dif_pre(a, &t.psi, fa, j, i1, i2, i3, ta, tb, tc, p);
+            r4_dif_pre(b, &t.psi, fb, j, i1, i2, i3, ta, tb, tc, p);
+        }
+    }
+    // Remaining passes operate in place on the u64 buffers.
+    let mut q = q0 >> 2;
     loop {
         let mut start = 0usize;
         while start < N {
@@ -185,8 +225,8 @@ fn ntt_dif2(a: &mut [u64; N], b: &mut [u64; N], t: &PrimeTables) {
                     let i1 = i0 + q;
                     let i2 = i1 + q;
                     let i3 = i2 + q;
-                    r4_dif(a, i0, i1, i2, i3, ta, tb, tc, p);
-                    r4_dif(b, i0, i1, i2, i3, ta, tb, tc, p);
+                    r4_dif(fa, i0, i1, i2, i3, ta, tb, tc, p);
+                    r4_dif(fb, i0, i1, i2, i3, ta, tb, tc, p);
                 }
             }
             start += 4 * q;
@@ -255,14 +295,7 @@ fn convolve_mod(t: &PrimeTables, a: &[u32; N], b: &[u32; N]) -> [u64; N] {
     let p = t.p;
     let mut fa = [0u64; N];
     let mut fb = [0u64; N];
-    unsafe {
-        for j in 0..N {
-            let psi = *t.psi.get_unchecked(j);
-            *fa.get_unchecked_mut(j) = (*a.get_unchecked(j) as u64 * psi) % p;
-            *fb.get_unchecked_mut(j) = (*b.get_unchecked(j) as u64 * psi) % p;
-        }
-    }
-    ntt_dif2(&mut fa, &mut fb, t);
+    ntt_dif2(a, b, &mut fa, &mut fb, t);
     unsafe {
         for j in 0..N {
             *fa.get_unchecked_mut(j) = (*fa.get_unchecked(j) * *fb.get_unchecked(j)) % p;
