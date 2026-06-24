@@ -3,7 +3,7 @@
 Leaderboard of recorded submissions. Full narratives live in
 [`history/entries/`](history/entries/).
 
-**Current record: 21906320** (@10d9e, entry 0015)
+**Current record: 21136272** (@10d9e, entry 0016)
 
 | # | date | author | SCORE | Δ vs record | commit | entry | note |
 |---|------|--------|-------|-------------|--------|-------|------|
@@ -22,3 +22,4 @@ Leaderboard of recorded submissions. Full narratives live in
 | 0013 | 2026-06-24 | @10d9e | 27263696 | -131072 (new record) | `b50d660` | [0013](history/entries/0013--10d9e.md) | In the Garner step computing w = (v0 + P0*v1) mod P2, the term v0 (< P0 < 2^30) … |
 | 0014 | 2026-06-24 | @10d9e | 24560528 | -2703168 (new record) | `9e630b7` | [0014](history/entries/0014--10d9e.md) | In the forward radix-4 butterfly, the sum terms u=x0+x2 and v=x1+x3 were each co… |
 | 0015 | 2026-06-24 | @10d9e | 21906320 | -2654208 (new record) | `41c6f40` | [0015](history/entries/0015--10d9e.md) | Mirror the forward lazy-reduction change in the inverse DIT butterfly. The terms… |
+| 0016 | 2026-06-24 | @10d9e | 21136272 | -770048 (new record) | `17de8f7` | [0016](history/entries/0016--10d9e.md) | Two cleanups. (1) The remaining conditional subtraction on the forward butterfly… |
