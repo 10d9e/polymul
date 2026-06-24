@@ -121,6 +121,27 @@ fn red(a: u64, p: u64) -> u64 {
     }
 }
 
+/// Lazy Shoup: `x * c (mod p)` left in [0, 2p) — no final conditional subtract.
+/// Valid (result in [0,2p)) for ANY x < 2^32, because with the 2^32 Shoup constant
+/// the quotient error is at most 1 (Harvey's trick). Since the butterflies keep
+/// values in [0, 4p) < 2^32, inputs are always in range.
+#[inline(always)]
+fn shoup_lazy(x: u64, c: u32, cs: u32, p: u64) -> u64 {
+    let q = x.wrapping_mul(cs as u64) >> 32;
+    x.wrapping_mul(c as u64).wrapping_sub(q.wrapping_mul(p))
+}
+
+/// Reduce a value in [0, 4p) into [0, 2p).
+#[inline(always)]
+fn red2p(a: u64, p: u64) -> u64 {
+    let t = p << 1;
+    if a >= t {
+        a - t
+    } else {
+        a
+    }
+}
+
 fn build_tables(p: u64) -> PrimeTables {
     let psi_root = modpow(GEN, (p - 1) / (2 * N as u64), p);
     let w_root = (psi_root as u128 * psi_root as u128 % p as u128) as u64;
@@ -165,14 +186,16 @@ fn build_tables(p: u64) -> PrimeTables {
     pt
 }
 
-/// Forward radix-4 DIF, natural -> digit-reversed, twiddles via Shoup.
-/// Each butterfly is a 4-point DFT (using the 4th root I = w^{N/4}) followed by
-/// the stage twiddles w^{e}, w^{2e}, w^{3e}. 1024 = 4^5 -> 5 passes.
+/// Forward radix-4 DIF, natural -> digit-reversed. Lazy: values stay in [0, 2p),
+/// intermediates in [0, 4p), and the twiddle multiplies use the lazy Shoup (no
+/// conditional subtract). Each butterfly is a 4-point DFT (4th root I = w^{N/4})
+/// followed by the stage twiddles w^{e}, w^{2e}, w^{3e}. 1024 = 4^5 -> 5 passes.
 #[inline(always)]
 fn dif4(x: &mut [u64; N], w: &[u32; N], ws: &[u32; N], ic: u32, ics: u32, p: u64) {
     let mut len = N / 4;
     while len >= 1 {
         let step = N / (4 * len);
+        let p2 = p << 1;
         let mut i = 0;
         while i < N {
             let mut e = 0usize; // = j * step
@@ -183,27 +206,27 @@ fn dif4(x: &mut [u64; N], w: &[u32; N], ws: &[u32; N], ic: u32, ics: u32, p: u64
                     let b = *x.get_unchecked(i + j + len);
                     let c = *x.get_unchecked(i + j + 2 * len);
                     let d = *x.get_unchecked(i + j + 3 * len);
-                    let s0 = red(a + c, p);
-                    let s1 = red(a + p - c, p);
-                    let s2 = red(b + d, p);
-                    let s3 = red(b + p - d, p);
-                    let is3 = shoup(s3, ic, ics, p); // I * (b - d)
-                    let y0 = red(s0 + s2, p);
-                    let y2 = red(s0 + p - s2, p);
-                    let y1 = red(s1 + is3, p);
-                    let y3 = red(s1 + p - is3, p);
+                    let s0 = red2p(a + c, p);
+                    let s2 = red2p(b + d, p);
+                    let s1 = red2p(a + p2 - c, p);
+                    let s3 = red2p(b + p2 - d, p);
+                    let is3 = shoup_lazy(s3, ic, ics, p); // I * (b - d), in [0,2p)
+                    let y0 = red2p(s0 + s2, p);
+                    let y2 = s0 + p2 - s2; // [0,4p)
+                    let y1 = s1 + is3; // [0,4p)
+                    let y3 = s1 + p2 - is3; // [0,4p)
                     *x.get_unchecked_mut(i + j) = y0;
                     if e == 0 {
-                        *x.get_unchecked_mut(i + j + len) = y1;
-                        *x.get_unchecked_mut(i + j + 2 * len) = y2;
-                        *x.get_unchecked_mut(i + j + 3 * len) = y3;
+                        *x.get_unchecked_mut(i + j + len) = red2p(y1, p);
+                        *x.get_unchecked_mut(i + j + 2 * len) = red2p(y2, p);
+                        *x.get_unchecked_mut(i + j + 3 * len) = red2p(y3, p);
                     } else {
                         *x.get_unchecked_mut(i + j + len) =
-                            shoup(y1, *w.get_unchecked(e), *ws.get_unchecked(e), p);
+                            shoup_lazy(y1, *w.get_unchecked(e), *ws.get_unchecked(e), p);
                         *x.get_unchecked_mut(i + j + 2 * len) =
-                            shoup(y2, *w.get_unchecked(2 * e), *ws.get_unchecked(2 * e), p);
+                            shoup_lazy(y2, *w.get_unchecked(2 * e), *ws.get_unchecked(2 * e), p);
                         *x.get_unchecked_mut(i + j + 3 * len) =
-                            shoup(y3, *w.get_unchecked(3 * e), *ws.get_unchecked(3 * e), p);
+                            shoup_lazy(y3, *w.get_unchecked(3 * e), *ws.get_unchecked(3 * e), p);
                     }
                 }
                 e += step;
@@ -215,13 +238,15 @@ fn dif4(x: &mut [u64; N], w: &[u32; N], ws: &[u32; N], ic: u32, ics: u32, p: u64
     }
 }
 
-/// Inverse radix-4 DIT, digit-reversed -> natural. Applies inverse twiddles to
-/// the high inputs, then the inverse 4-point DFT (using J = w^{-N/4} = I^{-1}).
+/// Inverse radix-4 DIT, digit-reversed -> natural. Lazy: values in [0, 2p). Applies
+/// inverse twiddles to the high inputs (lazy Shoup), then the inverse 4-point DFT
+/// (J = w^{-N/4} = I^{-1}).
 #[inline(always)]
 fn dit4(x: &mut [u64; N], iw: &[u32; N], iws: &[u32; N], jc: u32, jcs: u32, p: u64) {
     let mut len = 1;
     while len < N {
         let step = N / (4 * len);
+        let p2 = p << 1;
         let mut i = 0;
         while i < N {
             let mut e = 0usize;
@@ -233,19 +258,19 @@ fn dit4(x: &mut [u64; N], iw: &[u32; N], iws: &[u32; N], jc: u32, jcs: u32, p: u
                     let mut c = *x.get_unchecked(i + j + 2 * len);
                     let mut d = *x.get_unchecked(i + j + 3 * len);
                     if e != 0 {
-                        b = shoup(b, *iw.get_unchecked(e), *iws.get_unchecked(e), p);
-                        c = shoup(c, *iw.get_unchecked(2 * e), *iws.get_unchecked(2 * e), p);
-                        d = shoup(d, *iw.get_unchecked(3 * e), *iws.get_unchecked(3 * e), p);
+                        b = shoup_lazy(b, *iw.get_unchecked(e), *iws.get_unchecked(e), p);
+                        c = shoup_lazy(c, *iw.get_unchecked(2 * e), *iws.get_unchecked(2 * e), p);
+                        d = shoup_lazy(d, *iw.get_unchecked(3 * e), *iws.get_unchecked(3 * e), p);
                     }
-                    let s0 = red(a + c, p);
-                    let s1 = red(a + p - c, p);
-                    let s2 = red(b + d, p);
-                    let s3 = red(b + p - d, p);
-                    let js3 = shoup(s3, jc, jcs, p); // J * (b - d)
-                    *x.get_unchecked_mut(i + j) = red(s0 + s2, p);
-                    *x.get_unchecked_mut(i + j + 2 * len) = red(s0 + p - s2, p);
-                    *x.get_unchecked_mut(i + j + len) = red(s1 + js3, p);
-                    *x.get_unchecked_mut(i + j + 3 * len) = red(s1 + p - js3, p);
+                    let s0 = red2p(a + c, p);
+                    let s1 = red2p(a + p2 - c, p);
+                    let s2 = red2p(b + d, p);
+                    let s3 = red2p(b + p2 - d, p);
+                    let js3 = shoup_lazy(s3, jc, jcs, p); // J * (b - d), in [0,2p)
+                    *x.get_unchecked_mut(i + j) = red2p(s0 + s2, p);
+                    *x.get_unchecked_mut(i + j + 2 * len) = red2p(s0 + p2 - s2, p);
+                    *x.get_unchecked_mut(i + j + len) = red2p(s1 + js3, p);
+                    *x.get_unchecked_mut(i + j + 3 * len) = red2p(s1 + p2 - js3, p);
                 }
                 e += step;
                 j += 1;
