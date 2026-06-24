@@ -263,11 +263,10 @@ fn intt_dit(a: &mut [u64; N], b: &[u64; N], t: &PrimeTables) {
             let v3 = (x3 * wc) % p;
             let p0 = { let s = x0 + v1; if s >= p { s - p } else { s } };
             let p1 = { let d = x0 + p - v1; if d >= p { d - p } else { d } };
-            let p2 = { let s = x2 + v3; if s >= p { s - p } else { s } };
-            let p3 = { let d = x2 + p - v3; if d >= p { d - p } else { d } };
-
-            let va = (p2 * wa) % p;
-            let vb = (p3 * wb) % p;
+            // p2 = x2+v3 and p3 = x2+p-v3 feed only the multiplies, so % p reduces
+            // them fully -- no separate conditional subtraction needed.
+            let va = ((x2 + v3) * wa) % p;
+            let vb = ((x2 + p - v3) * wb) % p;
             *a.get_unchecked_mut(i0) = { let s = p0 + va; if s >= p { s - p } else { s } };
             *a.get_unchecked_mut(i2) = { let d = p0 + p - va; if d >= p { d - p } else { d } };
             *a.get_unchecked_mut(i1) = { let s = p1 + vb; if s >= p { s - p } else { s } };
@@ -300,11 +299,9 @@ fn intt_dit(a: &mut [u64; N], b: &[u64; N], t: &PrimeTables) {
                     let v3 = (x3 * wc) % p;
                     let p0 = { let s = x0 + v1; if s >= p { s - p } else { s } };
                     let p1 = { let d = x0 + p - v1; if d >= p { d - p } else { d } };
-                    let p2 = { let s = x2 + v3; if s >= p { s - p } else { s } };
-                    let p3 = { let d = x2 + p - v3; if d >= p { d - p } else { d } };
-
-                    let va = (p2 * wa) % p;
-                    let vb = (p3 * wb) % p;
+                    // p2/p3 feed only the multiplies; % p reduces them fully.
+                    let va = ((x2 + v3) * wa) % p;
+                    let vb = ((x2 + p - v3) * wb) % p;
                     *a.get_unchecked_mut(i0) = { let s = p0 + va; if s >= p { s - p } else { s } };
                     *a.get_unchecked_mut(i2) = { let d = p0 + p - va; if d >= p { d - p } else { d } };
                     *a.get_unchecked_mut(i1) = { let s = p1 + vb; if s >= p { s - p } else { s } };
@@ -338,11 +335,10 @@ fn intt_dit(a: &mut [u64; N], b: &[u64; N], t: &PrimeTables) {
             let v3 = (x3 * wc) % p;
             let p0 = { let s = x0 + v1; if s >= p { s - p } else { s } };
             let p1 = { let d = x0 + p - v1; if d >= p { d - p } else { d } };
-            let p2 = { let s = x2 + v3; if s >= p { s - p } else { s } };
-            let p3 = { let d = x2 + p - v3; if d >= p { d - p } else { d } };
-
-            let va = (p2 * wa) % p;
-            let vb = (p3 * wb) % p;
+            // p2 = x2+v3 and p3 = x2+p-v3 feed only the multiplies, so % p reduces
+            // them fully -- no separate conditional subtraction needed.
+            let va = ((x2 + v3) * wa) % p;
+            let vb = ((x2 + p - v3) * wb) % p;
             let o0 = { let s = p0 + va; if s >= p { s - p } else { s } };
             let o2 = { let d = p0 + p - va; if d >= p { d - p } else { d } };
             let o1 = { let s = p1 + vb; if s >= p { s - p } else { s } };
