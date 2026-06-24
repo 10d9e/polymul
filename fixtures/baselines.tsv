@@ -1,25 +1,25 @@
 # Baseline SCORE (WORK) — updated after first evaluate.sh run
 # algorithm	work	notes
-naive_o_n2	571975280	initial schoolbook baseline
-record_0002	48678784	entry 0002 by @10d9e
-record_0003	45822736	entry 0003 by @10d9e
-record_0004	40341088	entry 0004 by @10d9e
-record_0005	36505744	entry 0005 by @10d9e
-record_0006	35295312	entry 0006 by @10d9e
-record_0007	34477104	entry 0007 by @10d9e
-record_0008	33142128	entry 0008 by @10d9e
-record_0009	33109360	entry 0009 by @10d9e
-record_0010	29177200	entry 0010 by @10d9e
-record_0011	28234192	entry 0011 by @10d9e
-record_0012	27394768	entry 0012 by @10d9e
-record_0013	27263696	entry 0013 by @10d9e
-record_0014	24560528	entry 0014 by @10d9e
-record_0015	21906320	entry 0015 by @10d9e
-record_0016	21136272	entry 0016 by @10d9e
-record_0017	21070736	entry 0017 by @10d9e
-record_0018	21021584	entry 0018 by @10d9e
-record_0019	19700960	entry 0019 by @10d9e
-record_0020	18883808	entry 0020 by @10d9e
-record_0021	17824592	entry 0021 by @10d9e
-record_0022	17328992	entry 0022 by @10d9e
-record_0023	16874048	entry 0023 by @10d9e
+naive_o_n2	319558256	initial schoolbook baseline
+record_0002	51690192	entry 0002 by @10d9e
+record_0003	50018256	entry 0003 by @10d9e
+record_0004	46689312	entry 0004 by @10d9e
+record_0005	44764944	entry 0005 by @10d9e
+record_0006	44099440	entry 0006 by @10d9e
+record_0007	43697392	entry 0007 by @10d9e
+record_0008	42969328	entry 0008 by @10d9e
+record_0009	42559728	entry 0009 by @10d9e
+record_0010	41085168	entry 0010 by @10d9e
+record_0011	40737216	entry 0011 by @10d9e
+record_0012	39285792	entry 0012 by @10d9e
+record_0013	39236640	entry 0013 by @10d9e
+record_0014	41202768	entry 0014 by @10d9e
+record_0015	44975184	entry 0015 by @10d9e
+record_0016	47268944	entry 0016 by @10d9e
+record_0017	46449744	entry 0017 by @10d9e
+record_0018	45835344	entry 0018 by @10d9e
+record_0019	43871616	entry 0019 by @10d9e
+record_0020	42196224	entry 0020 by @10d9e
+record_0021	41081712	entry 0021 by @10d9e
+record_0022	40565136	entry 0022 by @10d9e
+record_0023	37923024	entry 0023 by @10d9e

@@ -1,4 +1,4 @@
-# Entry 0001 — SCORE 571975280 (baseline)
+# Entry 0001 — SCORE 319558256 (baseline)
 
 | Field | Value |
 |-------|-------|
@@ -7,7 +7,7 @@
 | Model | — |
 | Git author | autoresearch |
 | Commit | `3793fd8` |
-| SCORE | 571975280 |
+| SCORE | 319558256 |
 | Δ vs previous record | — (initial baseline) |
 | Status | record |
 
@@ -26,5 +26,5 @@ placeholder; all work happens in `poly_mul`.
 ## Eval snapshot
 
 ```
-SCORE: 571975280 (deterministic wasm WORK; lower is better)
+SCORE: 319558256 (deterministic wasm WORK; lower is better)
 ```
