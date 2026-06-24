@@ -3,7 +3,7 @@
 Leaderboard of recorded submissions. Full narratives live in
 [`history/entries/`](history/entries/).
 
-**Current record: 37923024** (@10d9e, entry 0023)
+**Current record: 34777856** (@10d9e, entry 0024)
 
 | # | date | author | SCORE | Δ vs record | commit | entry | note |
 |---|------|--------|-------|-------------|--------|-------|------|
@@ -30,3 +30,4 @@ Leaderboard of recorded submissions. Full narratives live in
 | 0021 | 2026-06-24 | @10d9e | 41081712 | +1845072 (no improvement) | `7515355` | [0021](history/entries/0021--10d9e.md) | Fuse the forward NTT's last two radix-4 passes (stages L=8,4 and L=2,1) into a s… |
 | 0022 | 2026-06-24 | @10d9e | 40565136 | +1328496 (no improvement) | `8f7db90` | [0022](history/entries/0022--10d9e.md) | Mirror the radix-16 forward on the inverse: fuse the inverse's first two radix-4… |
 | 0023 | 2026-06-24 | @10d9e | 37923024 | -1313616 (new record) | `530fc28` | [0023](history/entries/0023--10d9e.md) | In both radix-16 passes the first butterfly of every block (kk=0) has twiddle w1… |
+| 0024 | 2026-06-24 | @10d9e | 34777856 | -3145168 (new record) | `d1743eb` | [0024](history/entries/0024--10d9e.md) | Division-free Shoup-NTT (radix-4): every constant modular multiply (twiddles, p… |
