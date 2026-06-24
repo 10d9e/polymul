@@ -3,7 +3,7 @@
 Leaderboard of recorded submissions. Full narratives live in
 [`history/entries/`](history/entries/).
 
-**Current record: 17328992** (@10d9e, entry 0022)
+**Current record: 16874048** (@10d9e, entry 0023)
 
 | # | date | author | SCORE | Δ vs record | commit | entry | note |
 |---|------|--------|-------|-------------|--------|-------|------|
@@ -29,3 +29,4 @@ Leaderboard of recorded submissions. Full narratives live in
 | 0020 | 2026-06-24 | @10d9e | 18883808 | -817152 (new record) | `6efef57` | [0020](history/entries/0020--10d9e.md) | Mirror the radix-8 forward on the inverse: regroup the 10 radix-2 DIT stages as … |
 | 0021 | 2026-06-24 | @10d9e | 17824592 | -1059216 (new record) | `7515355` | [0021](history/entries/0021--10d9e.md) | Fuse the forward NTT's last two radix-4 passes (stages L=8,4 and L=2,1) into a s… |
 | 0022 | 2026-06-24 | @10d9e | 17328992 | -495600 (new record) | `8f7db90` | [0022](history/entries/0022--10d9e.md) | Mirror the radix-16 forward on the inverse: fuse the inverse's first two radix-4… |
+| 0023 | 2026-06-24 | @10d9e | 16874048 | -454944 (new record) | `530fc28` | [0023](history/entries/0023--10d9e.md) | In both radix-16 passes the first butterfly of every block (kk=0) has twiddle w1… |
