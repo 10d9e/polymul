@@ -3,7 +3,7 @@
 Leaderboard of recorded submissions. Full narratives live in
 [`history/entries/`](history/entries/).
 
-**Current record: 36505744** (@10d9e, entry 0005)
+**Current record: 35295312** (@10d9e, entry 0006)
 
 | # | date | author | SCORE | Δ vs record | commit | entry | note |
 |---|------|--------|-------|-------------|--------|-------|------|
@@ -12,3 +12,4 @@ Leaderboard of recorded submissions. Full narratives live in
 | 0003 | 2026-06-24 | @10d9e | 45822736 | -2856048 (new record) | `33590ce` | [0003](history/entries/0003--10d9e.md) | Transform both multiply operands (a and b) in a single lockstep forward NTT (ntt… |
 | 0004 | 2026-06-24 | @10d9e | 40341088 | -5481648 (new record) | `d9491dc` | [0004](history/entries/0004--10d9e.md) | Combine each pair of consecutive radix-2 DIF (Gentleman-Sande) forward stages in… |
 | 0005 | 2026-06-24 | @10d9e | 36505744 | -3835344 (new record) | `1be0313` | [0005](history/entries/0005--10d9e.md) | Mirror the radix-4 forward fusion on the inverse: combine each pair of consecuti… |
+| 0006 | 2026-06-24 | @10d9e | 35295312 | -1210432 (new record) | `c57b0a3` | [0006](history/entries/0006--10d9e.md) | The negacyclic pre-weight a_i *= psi^i was a separate pass over the data that ma… |
