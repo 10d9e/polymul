@@ -418,14 +418,18 @@ fn r4_lazy_dit(
 /// 16-element tile in registers — one memory pass instead of two. The second fused
 /// stage uses the inverse 16th-root twiddles iw^{64*g} (already in the `iw` table).
 #[inline(always)]
-fn dit4_first16(x: &mut [u64; N], iw: &[u32; N], iws: &[u32; N], jc: u32, jcs: u32, p: u64) {
+fn dit4_first16(
+    x: &mut [u64; N], fb: &[u64; N], pinv: u32, iw: &[u32; N], iws: &[u32; N], jc: u32, jcs: u32, p: u64,
+) {
     let p2 = p << 1;
     let mut i = 0;
     while i < N {
         let mut t = [0u64; 16];
         unsafe {
+            // Fold the spectral pointwise product into the first inverse stage's
+            // load: x holds fa, multiply by fb (Montgomery) as the tile is read in.
             for k in 0..16 {
-                *t.get_unchecked_mut(k) = *x.get_unchecked(i + k);
+                *t.get_unchecked_mut(k) = mont_mul(*x.get_unchecked(i + k), *fb.get_unchecked(i + k), p, pinv);
             }
             // half-block size 1: groups (4h..4h+3), trivial twiddles.
             for h in 0..4 {
@@ -469,8 +473,10 @@ fn dit4_first16(x: &mut [u64; N], iw: &[u32; N], iws: &[u32; N], jc: u32, jcs: u
 /// Inverse radix-4 DIT, digit-reversed -> natural. Lazy: values in [0, 2p). The
 /// first two stages (contiguous 16-element blocks) are fused into one register pass.
 #[inline(always)]
-fn dit4(x: &mut [u64; N], iw: &[u32; N], iws: &[u32; N], jc: u32, jcs: u32, p: u64) {
-    dit4_first16(x, iw, iws, jc, jcs, p);
+fn dit4(
+    x: &mut [u64; N], fb: &[u64; N], pinv: u32, iw: &[u32; N], iws: &[u32; N], jc: u32, jcs: u32, p: u64,
+) {
+    dit4_first16(x, fb, pinv, iw, iws, jc, jcs, p);
     let mut len = 16;
     while len < N {
         let step = N / (4 * len);
@@ -527,35 +533,29 @@ fn fwd2(a: &[u32; N], b: &[u32; N], t: &PrimeTables) -> ([u64; N], [u64; N]) {
     (xa, xb)
 }
 
-/// Inverse negacyclic transform: radix-4 DIT, then post-weight by psi^{-j}*N^{-1}.
+/// Inverse negacyclic transform of `fa` (the pointwise product is folded into the
+/// first DIT stage's load with `fb`), then post-weight by psi^{-j}*N^{-1}.
 #[inline(always)]
-fn inv(mut x: [u64; N], t: &PrimeTables) -> [u64; N] {
+fn inv(mut fa: [u64; N], fb: &[u64; N], t: &PrimeTables) -> [u64; N] {
     let p = t.p;
     // J = w^{-N/4} lives at index N/4 of the inverse twiddle table.
-    dit4(&mut x, &t.iw, &t.iws, t.iw[N / 4], t.iws[N / 4], p);
+    dit4(&mut fa, fb, t.pinv, &t.iw, &t.iws, t.iw[N / 4], t.iws[N / 4], p);
     unsafe {
         for j in 0..N {
-            let xj = *x.get_unchecked(j);
-            *x.get_unchecked_mut(j) =
+            let xj = *fa.get_unchecked(j);
+            *fa.get_unchecked_mut(j) =
                 shoup(xj, *t.ipsi.get_unchecked(j), *t.ipsis.get_unchecked(j), p);
         }
     }
-    x
+    fa
 }
 
 fn convolve_mod(t: &PrimeTables, a: &[u32; N], b: &[u32; N]) -> [u64; N] {
-    let p = t.p;
-    let (mut fa, fb) = fwd2(a, b, t);
-    // Spectral pointwise product. The domain is in Montgomery form (the psi
-    // pre-weight baked in R), so a division-free Montgomery multiply keeps it in
-    // Montgomery form; the ipsi post-weight (which baked in R^{-1}) converts out.
-    let pinv = t.pinv;
-    unsafe {
-        for i in 0..N {
-            *fa.get_unchecked_mut(i) = mont_mul(*fa.get_unchecked(i), *fb.get_unchecked(i), p, pinv);
-        }
-    }
-    inv(fa, t)
+    // The spectral pointwise product (Montgomery, since the domain is in Montgomery
+    // form) is folded into the inverse transform's first stage, so there is no
+    // standalone pointwise pass here.
+    let (fa, fb) = fwd2(a, b, t);
+    inv(fa, &fb, t)
 }
 
 /// Create a plan (precomputes NTT tables — free under the metric).
