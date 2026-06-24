@@ -472,13 +472,15 @@ fn dit4_first16(
 
 /// Inverse radix-4 DIT, digit-reversed -> natural. Lazy: values in [0, 2p). The
 /// first two stages (contiguous 16-element blocks) are fused into one register pass.
+#[allow(clippy::too_many_arguments)]
 #[inline(always)]
 fn dit4(
-    x: &mut [u64; N], fb: &[u64; N], pinv: u32, iw: &[u32; N], iws: &[u32; N], jc: u32, jcs: u32, p: u64,
+    x: &mut [u64; N], fb: &[u64; N], pinv: u32, iw: &[u32; N], iws: &[u32; N], jc: u32, jcs: u32,
+    ipsi: &[u32; N], ipsis: &[u32; N], p: u64,
 ) {
     dit4_first16(x, fb, pinv, iw, iws, jc, jcs, p);
     let mut len = 16;
-    while len < N {
+    while len < N / 4 {
         let step = N / (4 * len);
         let p2 = p << 1;
         let mut i = 0;
@@ -513,6 +515,29 @@ fn dit4(
         }
         len <<= 2;
     }
+    // Final stage (half-block 256) with the psi^{-1}*N^{-1} post-weight folded into
+    // the output store, so there is no standalone post-weight pass.
+    let p2 = p << 1;
+    let mut j = 0usize;
+    while j < N / 4 {
+        unsafe {
+            let e = j; // step = 1 at the last stage
+            let (it1c, it1s, it2c, it2s, it3c, it3s) = twiddles3(iw, iws, e);
+            let (o0, o1, o2, o3) = r4_lazy_dit(
+                *x.get_unchecked(j),
+                *x.get_unchecked(j + N / 4),
+                *x.get_unchecked(j + N / 2),
+                *x.get_unchecked(j + 3 * N / 4),
+                p, p2, jc, jcs, e == 0, it1c, it1s, it2c, it2s, it3c, it3s,
+            );
+            let pw = |o: u64, pos: usize| shoup(o, *ipsi.get_unchecked(pos), *ipsis.get_unchecked(pos), p);
+            *x.get_unchecked_mut(j) = pw(o0, j);
+            *x.get_unchecked_mut(j + N / 4) = pw(o1, j + N / 4);
+            *x.get_unchecked_mut(j + N / 2) = pw(o2, j + N / 2);
+            *x.get_unchecked_mut(j + 3 * N / 4) = pw(o3, j + 3 * N / 4);
+        }
+        j += 1;
+    }
 }
 
 /// Forward transform of both multiply operands together (shared twiddle loads).
@@ -537,16 +562,12 @@ fn fwd2(a: &[u32; N], b: &[u32; N], t: &PrimeTables) -> ([u64; N], [u64; N]) {
 /// first DIT stage's load with `fb`), then post-weight by psi^{-j}*N^{-1}.
 #[inline(always)]
 fn inv(mut fa: [u64; N], fb: &[u64; N], t: &PrimeTables) -> [u64; N] {
-    let p = t.p;
-    // J = w^{-N/4} lives at index N/4 of the inverse twiddle table.
-    dit4(&mut fa, fb, t.pinv, &t.iw, &t.iws, t.iw[N / 4], t.iws[N / 4], p);
-    unsafe {
-        for j in 0..N {
-            let xj = *fa.get_unchecked(j);
-            *fa.get_unchecked_mut(j) =
-                shoup(xj, *t.ipsi.get_unchecked(j), *t.ipsis.get_unchecked(j), p);
-        }
-    }
+    // J = w^{-N/4} lives at index N/4 of the inverse twiddle table. The pointwise
+    // product (first stage) and psi^{-1}*N^{-1} post-weight (last stage) are folded
+    // into the DIT, so there are no standalone passes around it.
+    dit4(
+        &mut fa, fb, t.pinv, &t.iw, &t.iws, t.iw[N / 4], t.iws[N / 4], &t.ipsi, &t.ipsis, t.p,
+    );
     fa
 }
 
