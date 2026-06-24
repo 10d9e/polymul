@@ -3,7 +3,7 @@
 Leaderboard of recorded submissions. Full narratives live in
 [`history/entries/`](history/entries/).
 
-**Current record: 17824592** (@10d9e, entry 0021)
+**Current record: 17328992** (@10d9e, entry 0022)
 
 | # | date | author | SCORE | Δ vs record | commit | entry | note |
 |---|------|--------|-------|-------------|--------|-------|------|
@@ -28,3 +28,4 @@ Leaderboard of recorded submissions. Full narratives live in
 | 0019 | 2026-06-24 | @10d9e | 19700960 | -1320624 (new record) | `8c49ff3` | [0019](history/entries/0019--10d9e.md) | Regroup the 10 radix-2 forward stages as 3+3+2+2 instead of 2+2+2+2+2: two fused… |
 | 0020 | 2026-06-24 | @10d9e | 18883808 | -817152 (new record) | `6efef57` | [0020](history/entries/0020--10d9e.md) | Mirror the radix-8 forward on the inverse: regroup the 10 radix-2 DIT stages as … |
 | 0021 | 2026-06-24 | @10d9e | 17824592 | -1059216 (new record) | `7515355` | [0021](history/entries/0021--10d9e.md) | Fuse the forward NTT's last two radix-4 passes (stages L=8,4 and L=2,1) into a s… |
+| 0022 | 2026-06-24 | @10d9e | 17328992 | -495600 (new record) | `8f7db90` | [0022](history/entries/0022--10d9e.md) | Mirror the radix-16 forward on the inverse: fuse the inverse's first two radix-4… |
