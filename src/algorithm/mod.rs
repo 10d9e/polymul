@@ -242,10 +242,43 @@ fn ntt_dif2(a: &[u32; N], b: &[u32; N], fa: &mut [u64; N], fb: &mut [u64; N], t:
 /// Bit-reversed-order input -> natural-order output. Inverse of `ntt_dif2`'s
 /// per-array transform.
 #[inline(always)]
-fn intt_dit(a: &mut [u64; N], t: &PrimeTables) {
+fn intt_dit(a: &mut [u64; N], b: &[u64; N], t: &PrimeTables) {
     let p = t.p;
-    // All passes except the last (q = 1, 4, ..., N/16).
-    let mut q = 1usize;
+    // First pass (q = 1): fold in the pointwise product a[i] *= b[i].
+    unsafe {
+        let wa = *t.ita.get_unchecked(1);
+        let wb = *t.itb.get_unchecked(1);
+        let wc = *t.itc.get_unchecked(1);
+        let mut start = 0usize;
+        while start < N {
+            let i0 = start;
+            let i1 = start + 1;
+            let i2 = start + 2;
+            let i3 = start + 3;
+            let x0 = (*a.get_unchecked(i0) * *b.get_unchecked(i0)) % p;
+            let x1 = (*a.get_unchecked(i1) * *b.get_unchecked(i1)) % p;
+            let x2 = (*a.get_unchecked(i2) * *b.get_unchecked(i2)) % p;
+            let x3 = (*a.get_unchecked(i3) * *b.get_unchecked(i3)) % p;
+
+            let v1 = (x1 * wc) % p;
+            let v3 = (x3 * wc) % p;
+            let p0 = { let s = x0 + v1; if s >= p { s - p } else { s } };
+            let p1 = { let d = x0 + p - v1; if d >= p { d - p } else { d } };
+            let p2 = { let s = x2 + v3; if s >= p { s - p } else { s } };
+            let p3 = { let d = x2 + p - v3; if d >= p { d - p } else { d } };
+
+            let va = (p2 * wa) % p;
+            let vb = (p3 * wb) % p;
+            *a.get_unchecked_mut(i0) = { let s = p0 + va; if s >= p { s - p } else { s } };
+            *a.get_unchecked_mut(i2) = { let d = p0 + p - va; if d >= p { d - p } else { d } };
+            *a.get_unchecked_mut(i1) = { let s = p1 + vb; if s >= p { s - p } else { s } };
+            *a.get_unchecked_mut(i3) = { let d = p1 + p - vb; if d >= p { d - p } else { d } };
+            start += 4;
+        }
+    }
+
+    // Middle passes (q = 4, ..., N/16).
+    let mut q = 4usize;
     while q < N / 4 {
         let mut start = 0usize;
         while start < N {
@@ -326,16 +359,10 @@ fn intt_dit(a: &mut [u64; N], t: &PrimeTables) {
 /// Negacyclic product mod p, returned as residues in [0, p).
 #[inline(always)]
 fn convolve_mod(t: &PrimeTables, a: &[u32; N], b: &[u32; N]) -> [u64; N] {
-    let p = t.p;
     let mut fa = [0u64; N];
     let mut fb = [0u64; N];
     ntt_dif2(a, b, &mut fa, &mut fb, t);
-    unsafe {
-        for j in 0..N {
-            *fa.get_unchecked_mut(j) = (*fa.get_unchecked(j) * *fb.get_unchecked(j)) % p;
-        }
-    }
-    intt_dit(&mut fa, t);
+    intt_dit(&mut fa, &fb, t);
     fa
 }
 
