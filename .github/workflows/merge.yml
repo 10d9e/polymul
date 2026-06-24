@@ -1,0 +1,42 @@
+name: Auto-merge
+
+on:
+  workflow_run:
+    workflows: [Verify PR]
+    types: [completed]
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: read
+
+jobs:
+  merge:
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Merge verified PR
+        env:
+          GH_TOKEN: ${{ secrets.SCOREKEEPER_PAT || github.token }}
+          VERIFIED_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          pr="$(gh api --paginate \
+            "repos/${GITHUB_REPOSITORY}/pulls?state=open&per_page=100" \
+            --jq ".[] | select(.head.sha==\"${VERIFIED_SHA}\") | .number" \
+            | head -n1 || true)"
+          if [[ -z "$pr" ]]; then
+            echo "No open PR for ${VERIFIED_SHA}"
+            exit 0
+          fi
+          read -r state draft head_sha <<< "$(gh pr view "$pr" \
+            --repo "$GITHUB_REPOSITORY" \
+            --json state,isDraft,headRefOid \
+            --jq '[.state, (.isDraft|tostring), .headRefOid] | @tsv')"
+          [[ "$state" == "OPEN" ]] || { echo "PR #${pr} is ${state}"; exit 0; }
+          [[ "$draft" != "true" ]] || { echo "PR #${pr} is draft"; exit 0; }
+          [[ "$head_sha" == "$VERIFIED_SHA" ]] || exit 0
+          echo "Merging PR #${pr}"
+          gh pr merge "$pr" --repo "$GITHUB_REPOSITORY" --squash --delete-branch

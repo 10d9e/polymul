@@ -23,6 +23,7 @@ while IFS= read -r f; do
   [[ -z "$f" ]] && continue
   case "$f" in
     src/algorithm/*) has_algorithm=1 ;;
+    docs/*|scripts/build-leaderboard.py) ;;
     .github/*|scripts/*) has_infra=1 ;;
     *) violations+=("$f") ;;
   esac
@@ -30,10 +31,11 @@ done < <(git diff --name-only "$base"...HEAD)
 
 if (( ${#violations[@]} )); then
   echo "PR BOUNDARY VIOLATION — algorithm submissions may only change src/algorithm/;"
+  echo "site PRs may only change docs/ or scripts/build-leaderboard.py;"
   echo "infra PRs may only change .github/ or scripts/:"
   printf '  %s\n' "${violations[@]}"
   echo
-  echo "Do not commit fixtures/baselines.tsv — CI records new records on merge."
+  echo "Do not commit RESULTS.md, history/entries/, or fixtures/baselines.tsv — CI records on merge."
   exit 1
 fi
 
@@ -60,5 +62,5 @@ if (( has_algorithm )); then
 elif (( has_infra )); then
   echo "PR boundary OK (infra changes only)"
 else
-  echo "PR boundary OK (no algorithm or infra changes)"
+  echo "PR boundary OK (site or no algorithm changes)"
 fi

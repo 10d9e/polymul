@@ -1,0 +1,72 @@
+name: Scorekeeper
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - src/algorithm/**
+  workflow_dispatch:
+
+concurrency:
+  group: scorekeeper-main
+  cancel-in-progress: false
+
+jobs:
+  score:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Compute score and generate ledger
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_SHA: ${{ github.sha }}
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_EVENT_HEAD_COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
+          OUT_DIR: ledger-out
+        run: bash scripts/ci-score.sh
+
+      - name: Upload ledger artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ledger
+          path: ledger-out/
+          if-no-files-found: ignore
+          retention-days: 1
+
+  publish:
+    needs: score
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.SCOREKEEPER_PAT || github.token }}
+          persist-credentials: true
+
+      - name: Download ledger artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ledger
+          path: ledger-in
+
+      - name: Publish ledger
+        env:
+          IN_DIR: ledger-in
+        run: bash scripts/ci-publish.sh

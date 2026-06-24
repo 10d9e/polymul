@@ -23,6 +23,14 @@ best="$(awk -F'\t' '
   }
 ' "$file" | sort -n | head -1)"
 
+# Prefer RESULTS.md current record when reading the default baseline file.
+if [[ "$file" == "fixtures/baselines.tsv" && -f RESULTS.md ]]; then
+  record="$(sed -n 's/^\*\*Current record: \([0-9][0-9]*\).*/\1/p' RESULTS.md | head -1)"
+  if [[ -n "$record" ]]; then
+    best="$record"
+  fi
+fi
+
 if [[ -z "$best" ]]; then
   echo "ci-best-score: no record in $file" >&2
   exit 1

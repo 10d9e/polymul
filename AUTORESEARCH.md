@@ -80,12 +80,12 @@ Everything else, including:
 The boundary is enforced by `scripts/guard.sh` (local) and `scripts/guard-pr.sh`
 (CI): only `src/algorithm/` may change in a submission.
 
-**CI score gate.** Pull requests to `main` run `.github/workflows/score-gate.yml`.
-If `src/algorithm/` changed, the candidate must produce a **strictly lower**
-SCORE than the current record in `fixtures/baselines.tsv`. Otherwise the check
-fails and the change cannot land (enable branch protection on **Score gate**).
-Do not commit `fixtures/baselines.tsv` — CI appends new records after a winning
-merge.
+**CI score gate.** Pull requests run **Verify PR**: boundary guard, required
+`## Model`, and the candidate must **strictly beat** the record in `RESULTS.md`.
+**Auto-merge** lands passing PRs; **Scorekeeper** appends `RESULTS.md` and
+`history/entries/`. Do not commit ledger files.
+
+**Leaderboard:** https://10d9e.github.io/polymul/
 
 ## Anti-cheat rules
 
@@ -109,7 +109,11 @@ merge.
    succeeds, all correctness tests pass, and it prints a numeric `SCORE:`.
 3. If the new SCORE is lower than your best, keep the change. Otherwise revert
    (`git checkout -- src/algorithm`).
-4. Occasionally run `cargo test` (debug build) to catch overflow bugs. Use
+4. Submit:
+   ```
+   bash scripts/submit.sh --model "<model>"
+   ```
+5. Occasionally run `cargo test` (debug build) to catch overflow bugs. Use
    `wrapping_*` ops for coefficient arithmetic.
 
 ## Research leads (roughly by expected payoff)

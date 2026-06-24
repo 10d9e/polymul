@@ -8,6 +8,9 @@ Agents improve only the algorithm; a frozen harness scores each candidate with a
 **deterministic complexity metric** (wasm fuel). See
 [`AUTORESEARCH.md`](AUTORESEARCH.md) for the rules.
 
+**[Live leaderboard →](https://10d9e.github.io/polymul/)** — score chart and
+submission history, updated automatically by CI on every verified merge.
+
 ## Layout
 
 ```
@@ -16,8 +19,10 @@ src/harness/     frozen   — reference oracle, fixtures, scoring
 src/main.rs      frozen   — CLI
 tests/           frozen   — correctness gate (synthetic, not corpus-tied)
 fixtures/        frozen   — pair metadata + baselines
-scripts/         frozen   — guard.sh, evaluate.sh, measure-complexity.sh
+history/         ledger   — submission history (CI-only)
+scripts/         frozen   — guard, evaluate, submit, scorekeeper
 metrics/         frozen   — wasm fuel metering (outside algorithm)
+docs/            site     — GitHub Pages leaderboard UI
 ```
 
 ## Usage
@@ -27,17 +32,20 @@ cargo build --release
 ./target/release/polymul eval
 ```
 
-Grade a candidate locally (guard + tests + score):
+Grade a candidate locally:
 
 ```bash
 bash scripts/evaluate.sh
 ```
 
-Measure deterministic complexity only:
+Submit an improvement (never open the PR by hand):
 
 ```bash
-bash scripts/measure-complexity.sh
+bash scripts/submit.sh --model "opus 4.8"
 ```
+
+`submit.sh` runs `evaluate.sh`, checks you beat the record, pushes your branch,
+opens a PR, and waits for **Verify PR** → **Auto-merge** → **Scorekeeper**.
 
 ## Frozen contract
 
@@ -47,20 +55,17 @@ pub fn plan_new() -> Plan;
 pub fn poly_mul(plan: &mut Plan, a: &[u32; 1024], b: &[u32; 1024]) -> [u32; 1024];
 ```
 
-`poly_mul` computes `a(X) * b(X) mod (X^1024+1)` with wrapping `u32` arithmetic.
-`Plan` may hold precomputed twiddle factors; `plan_new()` amortizes setup across
-calls — matching TFHE usage.
-
 ## Improving it
 
-Edit only `src/algorithm/`, run `bash scripts/evaluate.sh`, keep changes that
-lower **SCORE** (deterministic WORK) while all correctness tests pass. Details
-in [`AUTORESEARCH.md`](AUTORESEARCH.md) and [`AGENTS.md`](AGENTS.md).
+Edit only `src/algorithm/`, run `bash scripts/evaluate.sh`, then
+`bash scripts/submit.sh`. See [`CONTRIBUTING.md`](CONTRIBUTING.md) and
+[`AUTORESEARCH.md`](AUTORESEARCH.md).
 
 ## CI
 
-Pull requests to `main` that change `src/algorithm/` must **beat the current
-record** in `fixtures/baselines.tsv` (lower SCORE is better). The **Score gate**
-workflow runs correctness tests, wasm fuel metering, and fails if the candidate
-does not improve on the record. Winning merges append the new SCORE to
-`fixtures/baselines.tsv` automatically.
+| Workflow | Role |
+|----------|------|
+| **Verify PR** | Boundary + `## Model` + must beat record |
+| **Auto-merge** | Lands verified PRs |
+| **Scorekeeper** | Authoritative SCORE + `RESULTS.md` / `history/` |
+| **Pages** | Deploys leaderboard to GitHub Pages |

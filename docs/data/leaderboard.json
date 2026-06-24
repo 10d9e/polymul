@@ -1,0 +1,40 @@
+{
+  "repo": "10d9e/polymul",
+  "generatedAt": "2026-06-24T16:03:34Z",
+  "baseline": 571975280,
+  "baselines": [
+    {
+      "id": "naive_o_n2",
+      "label": "naive_o_n2",
+      "score": 571975280
+    }
+  ],
+  "record": {
+    "id": "0001",
+    "score": 571975280,
+    "author": "@10d9e"
+  },
+  "entries": [
+    {
+      "id": "0001",
+      "date": "2026-06-24",
+      "author": "@10d9e",
+      "model": "\u2014",
+      "score": 571975280,
+      "delta": "\u2014 (baseline)",
+      "deltaValue": null,
+      "commit": "3793fd8",
+      "commitFull": "`3793fd8`",
+      "status": "record",
+      "entryPath": "history/entries/0001-baseline.md",
+      "note": "Initial autoresearch harness with naive O(N\u00b2) schoolbook negacyclic polynomial\nmultiplication in `Z[X]/(X^1024+1)` with `u32` wrapping coefficients. `Plan` is a\nplaceholder; all work happens in `poly_mul`.",
+      "approach": "Initial autoresearch harness with naive O(N\u00b2) schoolbook negacyclic polynomial\nmultiplication in `Z[X]/(X^1024+1)` with `u32` wrapping coefficients. `Plan` is a\nplaceholder; all work happens in `poly_mul`.",
+      "iterationNotes": "",
+      "algoChanges": "(none \u2014 starting point)",
+      "evalSnapshot": "SCORE: 571975280 (deterministic wasm WORK; lower is better)",
+      "scoreRank": 1,
+      "isRecord": true,
+      "isNonWinning": false
+    }
+  ]
+}

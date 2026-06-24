@@ -6,11 +6,20 @@ cd "$(dirname "$0")/.."
 
 baseline_file="fixtures/baselines.tsv"
 if [[ -n "${GITHUB_BASE_SHA:-}" ]]; then
-  git show "${GITHUB_BASE_SHA}:fixtures/baselines.tsv" > /tmp/base-baselines.tsv
+  git show "${GITHUB_BASE_SHA}:fixtures/baselines.tsv" > /tmp/base-baselines.tsv 2>/dev/null || true
+  git show "${GITHUB_BASE_SHA}:RESULTS.md" > /tmp/base-results.md 2>/dev/null || true
   baseline_file="/tmp/base-baselines.tsv"
+  if [[ -f /tmp/base-results.md ]]; then
+    RESULTS_MD=/tmp/base-results.md
+  fi
 fi
 
-best="$(bash scripts/ci-best-score.sh "$baseline_file")"
+if [[ -n "${RESULTS_MD:-}" && -f "$RESULTS_MD" ]]; then
+  best="$(sed -n 's/^\*\*Current record: \([0-9][0-9]*\).*/\1/p' "$RESULTS_MD" | head -1)"
+fi
+if [[ -z "${best:-}" ]]; then
+  best="$(bash scripts/ci-best-score.sh "$baseline_file")"
+fi
 echo "Current record SCORE: $best (lower is better)"
 
 if ! bash scripts/evaluate.sh --no-guard 2>&1 | tee /tmp/polymul_eval.out; then

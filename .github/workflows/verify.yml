@@ -1,0 +1,69 @@
+name: Verify PR
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: PR boundary guard
+        env:
+          GITHUB_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: bash scripts/guard-pr.sh "${{ github.event.pull_request.base.sha }}"
+
+      - name: Require Model in PR description
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          algo_changed="$(git diff --name-only "${{ github.event.pull_request.base.sha }}"...HEAD -- src/algorithm/ || true)"
+          if [[ -z "$algo_changed" ]]; then
+            echo "No algorithm changes; skipping Model requirement"
+            exit 0
+          fi
+          model="$(bash scripts/ci-parse-pr-body.sh Model "$PR_BODY" || true)"
+          if [[ -z "$model" ]]; then
+            echo "::error::Missing required ## Model section in the PR description."
+            exit 1
+          fi
+
+      - name: Score gate (must beat record)
+        id: gate
+        env:
+          GITHUB_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if git diff --name-only "${{ github.event.pull_request.base.sha }}"...HEAD -- src/algorithm/ | grep -q .; then
+            bash scripts/ci-score-gate.sh | tee /tmp/eval.out
+          else
+            echo "No algorithm changes; score gate skipped"
+          fi
+
+      - name: Summary
+        run: |
+          {
+            echo "## Verification passed"
+            echo
+            if [[ -f /tmp/eval.out ]]; then
+              echo '```'
+              tail -n 8 /tmp/eval.out
+              echo '```'
+            else
+              echo "Boundary/metadata checks passed (no algorithm changes)."
+            fi
+            echo
+            echo "**Scorekeeper** records the ledger after auto-merge."
+          } >> "$GITHUB_STEP_SUMMARY"
