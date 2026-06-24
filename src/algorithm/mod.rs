@@ -213,48 +213,57 @@ fn build_tables(p: u64) -> PrimeTables {
     pt
 }
 
-/// Forward radix-4 DIF, natural -> digit-reversed. Lazy: values stay in [0, 2p),
-/// intermediates in [0, 4p), and the twiddle multiplies use the lazy Shoup (no
-/// conditional subtract). Each butterfly is a 4-point DFT (4th root I = w^{N/4})
-/// followed by the stage twiddles w^{e}, w^{2e}, w^{3e}. 1024 = 4^5 -> 5 passes.
+/// One forward radix-4 DIF butterfly on array `x` at base `i+j` (stride `len`),
+/// given the three stage twiddles already loaded. Lazy: values in [0,2p),
+/// intermediates in [0,4p). `e == 0` means trivial (unit) twiddles.
+#[allow(clippy::too_many_arguments)]
 #[inline(always)]
-fn dif4(x: &mut [u64; N], w: &[u32; N], ws: &[u32; N], ic: u32, ics: u32, p: u64) {
+unsafe fn r4_bfly(
+    x: &mut [u64; N], i: usize, j: usize, len: usize, p: u64, p2: u64, ic: u32, ics: u32, e: usize,
+    t1c: u32, t1s: u32, t2c: u32, t2s: u32, t3c: u32, t3s: u32,
+) {
+    let a = *x.get_unchecked(i + j);
+    let b = *x.get_unchecked(i + j + len);
+    let c = *x.get_unchecked(i + j + 2 * len);
+    let d = *x.get_unchecked(i + j + 3 * len);
+    let s0 = red2p(a + c, p);
+    let s2 = red2p(b + d, p);
+    let s1 = red2p(a + p2 - c, p);
+    let s3 = red2p(b + p2 - d, p);
+    let is3 = shoup_lazy(s3, ic, ics, p); // I * (b - d), in [0,2p)
+    let y0 = red2p(s0 + s2, p);
+    let y2 = s0 + p2 - s2; // [0,4p)
+    let y1 = s1 + is3; // [0,4p)
+    let y3 = s1 + p2 - is3; // [0,4p)
+    *x.get_unchecked_mut(i + j) = y0;
+    if e == 0 {
+        *x.get_unchecked_mut(i + j + len) = red2p(y1, p);
+        *x.get_unchecked_mut(i + j + 2 * len) = red2p(y2, p);
+        *x.get_unchecked_mut(i + j + 3 * len) = red2p(y3, p);
+    } else {
+        *x.get_unchecked_mut(i + j + len) = shoup_lazy(y1, t1c, t1s, p);
+        *x.get_unchecked_mut(i + j + 2 * len) = shoup_lazy(y2, t2c, t2s, p);
+        *x.get_unchecked_mut(i + j + 3 * len) = shoup_lazy(y3, t3c, t3s, p);
+    }
+}
+
+/// Forward radix-4 DIF on the two multiply operands in lockstep, sharing the
+/// stage twiddle loads and index arithmetic across both arrays.
+#[inline(always)]
+fn dif4_2(xa: &mut [u64; N], xb: &mut [u64; N], w: &[u32; N], ws: &[u32; N], ic: u32, ics: u32, p: u64) {
     let mut len = N / 4;
     while len >= 1 {
         let step = N / (4 * len);
         let p2 = p << 1;
         let mut i = 0;
         while i < N {
-            let mut e = 0usize; // = j * step
+            let mut e = 0usize;
             let mut j = 0;
             while j < len {
                 unsafe {
-                    let a = *x.get_unchecked(i + j);
-                    let b = *x.get_unchecked(i + j + len);
-                    let c = *x.get_unchecked(i + j + 2 * len);
-                    let d = *x.get_unchecked(i + j + 3 * len);
-                    let s0 = red2p(a + c, p);
-                    let s2 = red2p(b + d, p);
-                    let s1 = red2p(a + p2 - c, p);
-                    let s3 = red2p(b + p2 - d, p);
-                    let is3 = shoup_lazy(s3, ic, ics, p); // I * (b - d), in [0,2p)
-                    let y0 = red2p(s0 + s2, p);
-                    let y2 = s0 + p2 - s2; // [0,4p)
-                    let y1 = s1 + is3; // [0,4p)
-                    let y3 = s1 + p2 - is3; // [0,4p)
-                    *x.get_unchecked_mut(i + j) = y0;
-                    if e == 0 {
-                        *x.get_unchecked_mut(i + j + len) = red2p(y1, p);
-                        *x.get_unchecked_mut(i + j + 2 * len) = red2p(y2, p);
-                        *x.get_unchecked_mut(i + j + 3 * len) = red2p(y3, p);
-                    } else {
-                        *x.get_unchecked_mut(i + j + len) =
-                            shoup_lazy(y1, *w.get_unchecked(e), *ws.get_unchecked(e), p);
-                        *x.get_unchecked_mut(i + j + 2 * len) =
-                            shoup_lazy(y2, *w.get_unchecked(2 * e), *ws.get_unchecked(2 * e), p);
-                        *x.get_unchecked_mut(i + j + 3 * len) =
-                            shoup_lazy(y3, *w.get_unchecked(3 * e), *ws.get_unchecked(3 * e), p);
-                    }
+                    let (t1c, t1s, t2c, t2s, t3c, t3s) = twiddles3(w, ws, e);
+                    r4_bfly(xa, i, j, len, p, p2, ic, ics, e, t1c, t1s, t2c, t2s, t3c, t3s);
+                    r4_bfly(xb, i, j, len, p, p2, ic, ics, e, t1c, t1s, t2c, t2s, t3c, t3s);
                 }
                 e += step;
                 j += 1;
@@ -262,6 +271,23 @@ fn dif4(x: &mut [u64; N], w: &[u32; N], ws: &[u32; N], ic: u32, ics: u32, p: u64
             i += 4 * len;
         }
         len >>= 2;
+    }
+}
+
+/// Load the three stage twiddles (w^e, w^{2e}, w^{3e}) and their Shoup constants.
+#[inline(always)]
+unsafe fn twiddles3(w: &[u32; N], ws: &[u32; N], e: usize) -> (u32, u32, u32, u32, u32, u32) {
+    if e == 0 {
+        (0, 0, 0, 0, 0, 0)
+    } else {
+        (
+            *w.get_unchecked(e),
+            *ws.get_unchecked(e),
+            *w.get_unchecked(2 * e),
+            *ws.get_unchecked(2 * e),
+            *w.get_unchecked(3 * e),
+            *ws.get_unchecked(3 * e),
+        )
     }
 }
 
@@ -308,23 +334,22 @@ fn dit4(x: &mut [u64; N], iw: &[u32; N], iws: &[u32; N], jc: u32, jcs: u32, p: u
     }
 }
 
-/// Forward negacyclic transform of `a`: pre-weight by psi^j, then radix-4 DIF.
+/// Forward transform of both multiply operands together (shared twiddle loads).
 #[inline(always)]
-fn fwd(a: &[u32; N], t: &PrimeTables) -> [u64; N] {
+fn fwd2(a: &[u32; N], b: &[u32; N], t: &PrimeTables) -> ([u64; N], [u64; N]) {
     let p = t.p;
-    let mut x = [0u64; N];
+    let mut xa = [0u64; N];
+    let mut xb = [0u64; N];
     unsafe {
-        // Fuse the per-input reduction into the psi pre-weight: lazy Shoup accepts
-        // any x < 2^32, so the raw (unreduced) coefficient a[j] can be multiplied
-        // by psi^j directly, yielding a[j]*psi^j mod p in [0,2p) with no `%`.
         for j in 0..N {
-            *x.get_unchecked_mut(j) =
-                shoup_lazy(*a.get_unchecked(j) as u64, *t.psi.get_unchecked(j), *t.psis.get_unchecked(j), p);
+            let psi = *t.psi.get_unchecked(j);
+            let psis = *t.psis.get_unchecked(j);
+            *xa.get_unchecked_mut(j) = shoup_lazy(*a.get_unchecked(j) as u64, psi, psis, p);
+            *xb.get_unchecked_mut(j) = shoup_lazy(*b.get_unchecked(j) as u64, psi, psis, p);
         }
     }
-    // I = w^{N/4} lives at index N/4 of the forward twiddle table.
-    dif4(&mut x, &t.w, &t.ws, t.w[N / 4], t.ws[N / 4], p);
-    x
+    dif4_2(&mut xa, &mut xb, &t.w, &t.ws, t.w[N / 4], t.ws[N / 4], p);
+    (xa, xb)
 }
 
 /// Inverse negacyclic transform: radix-4 DIT, then post-weight by psi^{-j}*N^{-1}.
@@ -345,8 +370,7 @@ fn inv(mut x: [u64; N], t: &PrimeTables) -> [u64; N] {
 
 fn convolve_mod(t: &PrimeTables, a: &[u32; N], b: &[u32; N]) -> [u64; N] {
     let p = t.p;
-    let mut fa = fwd(a, t);
-    let fb = fwd(b, t);
+    let (mut fa, fb) = fwd2(a, b, t);
     // Spectral pointwise product. The domain is in Montgomery form (the psi
     // pre-weight baked in R), so a division-free Montgomery multiply keeps it in
     // Montgomery form; the ipsi post-weight (which baked in R^{-1}) converts out.
