@@ -152,17 +152,18 @@ unsafe fn r4_dif(x: &mut [u64; N], i0: usize, i1: usize, i2: usize, i3: usize,
     let x2 = *x.get_unchecked(i2);
     let x3 = *x.get_unchecked(i3);
 
+    // s02, s13, m02, m13 are kept in [0, p). The diff terms (x0+p-x2 etc.) stay
+    // in (0, 2p) and feed only a `* twiddle % p`, whose product fits u64 and is
+    // fully reduced — so they need no separate conditional subtraction.
     let s02 = { let s = x0 + x2; if s >= p { s - p } else { s } };
     let s13 = { let s = x1 + x3; if s >= p { s - p } else { s } };
-    let d02 = { let d = x0 + p - x2; if d >= p { d - p } else { d } };
-    let d13 = { let d = x1 + p - x3; if d >= p { d - p } else { d } };
-    let m02 = (d02 * ta) % p;
-    let m13 = (d13 * tb) % p;
+    let m02 = ((x0 + p - x2) * ta) % p;
+    let m13 = ((x1 + p - x3) * tb) % p;
 
     *x.get_unchecked_mut(i0) = { let s = s02 + s13; if s >= p { s - p } else { s } };
-    *x.get_unchecked_mut(i1) = ({ let d = s02 + p - s13; if d >= p { d - p } else { d } } * tc) % p;
+    *x.get_unchecked_mut(i1) = ((s02 + p - s13) * tc) % p;
     *x.get_unchecked_mut(i2) = { let s = m02 + m13; if s >= p { s - p } else { s } };
-    *x.get_unchecked_mut(i3) = ({ let d = m02 + p - m13; if d >= p { d - p } else { d } } * tc) % p;
+    *x.get_unchecked_mut(i3) = ((m02 + p - m13) * tc) % p;
 }
 
 /// First fused radix-4 DIF butterfly that also applies the negacyclic pre-weight
@@ -179,15 +180,13 @@ unsafe fn r4_dif_pre(src: &[u32; N], psi: &[u64; N], dst: &mut [u64; N],
 
     let s02 = { let s = x0 + x2; if s >= p { s - p } else { s } };
     let s13 = { let s = x1 + x3; if s >= p { s - p } else { s } };
-    let d02 = { let d = x0 + p - x2; if d >= p { d - p } else { d } };
-    let d13 = { let d = x1 + p - x3; if d >= p { d - p } else { d } };
-    let m02 = (d02 * ta) % p;
-    let m13 = (d13 * tb) % p;
+    let m02 = ((x0 + p - x2) * ta) % p;
+    let m13 = ((x1 + p - x3) * tb) % p;
 
     *dst.get_unchecked_mut(i0) = { let s = s02 + s13; if s >= p { s - p } else { s } };
-    *dst.get_unchecked_mut(i1) = ({ let d = s02 + p - s13; if d >= p { d - p } else { d } } * tc) % p;
+    *dst.get_unchecked_mut(i1) = ((s02 + p - s13) * tc) % p;
     *dst.get_unchecked_mut(i2) = { let s = m02 + m13; if s >= p { s - p } else { s } };
-    *dst.get_unchecked_mut(i3) = ({ let d = m02 + p - m13; if d >= p { d - p } else { d } } * tc) % p;
+    *dst.get_unchecked_mut(i3) = ((m02 + p - m13) * tc) % p;
 }
 
 /// Forward NTT of both multiply operands in lockstep, using fused radix-4 passes
