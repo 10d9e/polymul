@@ -3,7 +3,7 @@
 Leaderboard of recorded submissions. Full narratives live in
 [`history/entries/`](history/entries/).
 
-**Current record: 21070736** (@10d9e, entry 0017)
+**Current record: 21021584** (@10d9e, entry 0018)
 
 | # | date | author | SCORE | Δ vs record | commit | entry | note |
 |---|------|--------|-------|-------------|--------|-------|------|
@@ -24,3 +24,4 @@ Leaderboard of recorded submissions. Full narratives live in
 | 0015 | 2026-06-24 | @10d9e | 21906320 | -2654208 (new record) | `41c6f40` | [0015](history/entries/0015--10d9e.md) | Mirror the forward lazy-reduction change in the inverse DIT butterfly. The terms… |
 | 0016 | 2026-06-24 | @10d9e | 21136272 | -770048 (new record) | `17de8f7` | [0016](history/entries/0016--10d9e.md) | Two cleanups. (1) The remaining conditional subtraction on the forward butterfly… |
 | 0017 | 2026-06-24 | @10d9e | 21070736 | -65536 (new record) | `e607afa` | [0017](history/entries/0017--10d9e.md) | Two more Garner intermediates that feed only a subsequent modular multiply are k… |
+| 0018 | 2026-06-24 | @10d9e | 21021584 | -49152 (new record) | `b376732` | [0018](history/entries/0018--10d9e.md) | In the q=1 forward butterfly ta=1, so m02 = x0 + p - x2 is a plain difference (n… |
