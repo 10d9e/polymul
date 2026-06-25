@@ -703,27 +703,19 @@ unsafe fn dit_l4_v(t: &mut [u64; 16], iwp: &[u64; N], cav: L, jcpv: L, pv: L, p2
     }
 }
 
-/// Remaining inverse DIT stages (the first two are done by `boundary`): the middle
-/// strided stages (half-blocks 16, 64) then the final stage (half-block 256) with the
-/// psi^{-1}*N^{-1} post-weight folded into the output store. Values in [0,4p).
-/// Vectorized: butterflies `j` and `j+1` ride the two lanes. Their per-slot memory
-/// positions are adjacent (`x[base]`, `x[base+1]`), so each radix-4 input/output is a
-/// contiguous v128 load/store; the two lanes' twiddles differ and are loaded as pairs.
-#[allow(clippy::too_many_arguments)]
+/// Middle inverse DIT stages (the first two are done by `boundary`, the final stage by
+/// `final_prime` fused into the CRT): the strided stages (half-blocks 16, 64). Values in
+/// [0,8p). Vectorized: butterflies `j` and `j+1` ride the two lanes (adjacent slots ->
+/// contiguous v128 load/store; per-lane twiddles loaded as pairs).
 #[cfg_attr(target_arch = "wasm32", target_feature(enable = "simd128"))]
-unsafe fn dit4_rest(
-    x: &mut [u64; N], iwp: &[u64; N], iwp2: &[u64; N / 2], iwp3: &[u64; N / 2], jcp: u64,
-    ipsip: &[u64; N], p: u64,
-) {
+unsafe fn dit4_middle(x: &mut [u64; N], iwp: &[u64; N], jcp: u64, p: u64) {
     let pv = L::splat(p);
     let p2v = L::splat(p << 1);
-    let p4v = L::splat(p << 2);
     let cav = L::splat((1u64 << 32) + 1);
     let jcpv = L::splat(jcp);
     let xp = x.as_mut_ptr();
     // Butterfly-outer loop: the per-lane twiddles depend only on the column `j`, not
-    // the block `i`, so they are loaded once and reused across the inner block loop
-    // from registers (instead of reloading per block).
+    // the block `i`, so they are loaded once and reused across the inner block loop.
     let mut len = 16;
     while len < N / 4 {
         let step = N / (4 * len);
@@ -751,34 +743,36 @@ unsafe fn dit4_rest(
         }
         len <<= 2;
     }
-    // Final stage (half-block 256, step=1, e=j) with the psi^{-1}*N^{-1} post-weight
-    // folded into the output store (no standalone post-weight pass).
-    let mut j = 0usize;
-    let iwp2p = iwp2.as_ptr();
-    let iwp3p = iwp3.as_ptr();
-    let ipsipp = ipsip.as_ptr();
-    while j < N / 4 {
-        // step=1, so the pair (j, j+1) has adjacent twiddle exponents: t1 is iwp[j..],
-        // t2 is iwp2[j..] = iwp[2j],iwp[2j+2], t3 is iwp3[j..] = iwp[3j],iwp[3j+3] — each
-        // a single contiguous v128 load instead of two scattered scalar loads.
-        let (t1p, t2p, t3p) = (L::load(iwp.as_ptr().add(j)), L::load(iwp2p.add(j)), L::load(iwp3p.add(j)));
-        let a = L::load(xp.add(j));
-        let b = L::load(xp.add(j + N / 4));
-        let c = L::load(xp.add(j + N / 2));
-        let d = L::load(xp.add(j + 3 * N / 4));
-        let (o0, o1, o2, o3) =
-            r4_lazy_dit_l_final(a, b, c, d, pv, p2v, p4v, cav, jcpv, t1p, t2p, t3p);
-        // Post-weight (Plantard with conditional subtract -> [0,p)) per lane position.
-        // The pair (pos, pos+1) is adjacent in ipsip, so a single contiguous load.
-        let pw = |o: L, pos: usize| -> L {
-            redp_l(plantard_lv(o, L::load(ipsipp.add(pos)), pv, cav), pv)
-        };
-        L::store(xp.add(j), pw(o0, j));
-        L::store(xp.add(j + N / 4), pw(o1, j + N / 4));
-        L::store(xp.add(j + N / 2), pw(o2, j + N / 2));
-        L::store(xp.add(j + 3 * N / 4), pw(o3, j + 3 * N / 4));
-        j += 2;
-    }
+}
+
+/// Final inverse DIT stage (half-block 256, step=1) + psi^{-1}*N^{-1} post-weight for ONE
+/// prime at butterfly column `j` (pair j, j+1). Returns the four reduced [0,p) result
+/// coefficients at positions j, j+N/4, j+N/2, j+3N/4 (each lane = j, j+1) — kept in
+/// registers so the CRT can consume them without the per-prime result array ever
+/// touching memory.
+#[inline]
+#[cfg_attr(target_arch = "wasm32", target_feature(enable = "simd128"))]
+unsafe fn final_prime(t: &PrimeTables, x: &[u64; N], j: usize, cav: L) -> (L, L, L, L) {
+    let p = t.p;
+    let pv = L::splat(p);
+    let p2v = L::splat(p << 1);
+    let p4v = L::splat(p << 2);
+    let jcpv = L::splat(t.iwp[N / 4]);
+    let xp = x.as_ptr();
+    let (t1p, t2p, t3p) = (
+        L::load(t.iwp.as_ptr().add(j)),
+        L::load(t.iwp2.as_ptr().add(j)),
+        L::load(t.iwp3.as_ptr().add(j)),
+    );
+    let a = L::load(xp.add(j));
+    let b = L::load(xp.add(j + N / 4));
+    let c = L::load(xp.add(j + N / 2));
+    let d = L::load(xp.add(j + 3 * N / 4));
+    let (o0, o1, o2, o3) =
+        r4_lazy_dit_l_final(a, b, c, d, pv, p2v, p4v, cav, jcpv, t1p, t2p, t3p);
+    let ipp = t.ipsip.as_ptr();
+    let pw = |o: L, pos: usize| -> L { redp_l(plantard_lv(o, L::load(ipp.add(pos)), pv, cav), pv) };
+    (pw(o0, j), pw(o1, j + N / 4), pw(o2, j + N / 2), pw(o3, j + 3 * N / 4))
 }
 
 /// Fused transform boundary on contiguous 16-element blocks: `xab` holds both
@@ -826,11 +820,14 @@ unsafe fn boundary_simd(xab: &[L; N], out: &mut [u64; N], t: &PrimeTables) {
     }
 }
 
-fn convolve_mod(t: &PrimeTables, a: &[u32; N], b: &[u32; N]) -> [u64; N] {
+/// Forward + pointwise + inverse up to but NOT including the final DIT stage. The final
+/// stage and post-weight are fused into the CRT (`final_crt`), so the per-prime result
+/// array is never materialized. Returns the pre-final inverse state in [0,8p).
+fn convolve_prefinal(t: &PrimeTables, a: &[u32; N], b: &[u32; N]) -> [u64; N] {
     let mut x = [0u64; N];
     unsafe {
         fwd_boundary(t, a, b, &mut x); // forward (SIMD a/b) + pointwise + first inv stages
-        dit4_rest(&mut x, &t.iwp, &t.iwp2, &t.iwp3, t.iwp[N / 4], &t.ipsip, t.p); // rest of inverse (SIMD)
+        dit4_middle(&mut x, &t.iwp, t.iwp[N / 4], t.p); // middle inverse stages (SIMD)
     }
     x
 }
@@ -862,57 +859,65 @@ pub fn plan_new() -> Plan {
     }
 }
 
-/// Garner CRT reconstruction, vectorized two coefficients (j, j+1) at a time. The
-/// mixing constants are identical for both lanes (splat); the per-prime residues are
-/// adjacent in memory so each `r*[j..j+2]` is a contiguous v128 load. Every modular
-/// multiply is a lane Shoup (reduced to [0,p) with a conditional subtract).
+/// Garner CRT reconstruction for one coefficient pair, given the three primes' residues
+/// `r0 < P0`, `r1 < P1`, `r2 < P2` already in registers. Returns the product mod 2^32 in
+/// both lanes. Every modular multiply is a lane Plantard (reduced to [0,p)). The mixing
+/// constants are loop-invariant splats (hoisted by the caller's loop).
+#[inline]
 #[cfg_attr(target_arch = "wasm32", target_feature(enable = "simd128"))]
-unsafe fn crt_combine(r0: &[u64; N], r1: &[u64; N], r2: &[u64; N], plan: &Plan, res: &mut [u32; N]) {
+unsafe fn crt_one(r0: L, r1: L, r2: L, plan: &Plan, cav: L) -> L {
     let p1v = L::splat(P1);
     let p2v = L::splat(P2);
     let p2_3v = L::splat(3 * P2);
+    let v0 = r0; // < P0 < P1
+    // v1 = (r1 - v0) * inv(P0) mod P1.
+    let t1 = r1.add(p1v).sub(v0); // [0, 2*P1)
+    let v1 = redp_l(plantard_lv(t1, L::splat(plan.inv_p0_mod_p1_p), p1v, cav), p1v);
+    // w = (v0 + P0*v1) mod P2; term stays lazy in [0,2*P2) (absorbed by the 3*P2 bias).
+    let term = plantard_lv(v1, L::splat(plan.p0_mod_p2_p), p2v, cav); // [0, 2*P2)
+    let w = v0.add(term); // < P0 + 2*P2 < 3*P2
+    let t2 = r2.add(p2_3v).sub(w); // (0, 4*P2)
+    let v2 = redp_l(plantard_lv(t2, L::splat(plan.inv_m01_mod_p2_p), p2v, cav), p2v);
+    // u = v0 + P0*v1 + P0*P1*v2 ; low 32 bits = product mod 2^32, sign from v2.
+    let lo = v0.add(L::splat(plan.p0_lo as u64).mul(v1)).add(L::splat(plan.m01_lo as u64).mul(v2));
+    let m = v2.ge(L::splat(plan.p2_half));
+    L::select(m, lo.sub(L::splat(plan.p_lo as u64)), lo)
+}
+
+/// Fused inverse-final-stage + Garner CRT. For each butterfly column it runs the final
+/// DIT stage and post-weight for all three primes (`final_prime`, kept in registers) then
+/// CRT-combines the four resulting coefficient groups — so the three per-prime result
+/// arrays are never written to or read back from memory.
+#[cfg_attr(target_arch = "wasm32", target_feature(enable = "simd128"))]
+unsafe fn final_crt(x0: &[u64; N], x1: &[u64; N], x2: &[u64; N], plan: &Plan, res: &mut [u32; N]) {
     let cav = L::splat((1u64 << 32) + 1);
-    let inv01_v = L::splat(plan.inv_p0_mod_p1_p);
-    let p0m2_v = L::splat(plan.p0_mod_p2_p);
-    let invm01_v = L::splat(plan.inv_m01_mod_p2_p);
-    let p2_half_v = L::splat(plan.p2_half);
-    let p0_lo_v = L::splat(plan.p0_lo as u64);
-    let m01_lo_v = L::splat(plan.m01_lo as u64);
-    let p_lo_v = L::splat(plan.p_lo as u64);
-    let r0p = r0.as_ptr();
-    let r1p = r1.as_ptr();
-    let r2p = r2.as_ptr();
+    let rp = res.as_mut_ptr();
     let mut j = 0;
-    while j < N {
-        let v0 = L::load(r0p.add(j)); // < P0 < P1
-        // v1 = (r1 - v0) * inv(P0) mod P1.
-        let t1 = L::load(r1p.add(j)).add(p1v).sub(v0); // [0, 2*P1)
-        let v1 = redp_l(plantard_lv(t1, inv01_v, p1v, cav), p1v);
-        // w = (v0 + P0*v1) mod P2 kept lazy; term stays in [0,2*P2) (it only feeds w,
-        // which the 3*P2 bias on t2 absorbs), so its reduction is dropped.
-        let term = plantard_lv(v1, p0m2_v, p2v, cav); // [0, 2*P2)
-        let w = v0.add(term); // < P0 + 2*P2 < 3*P2
-        let t2 = L::load(r2p.add(j)).add(p2_3v).sub(w); // (0, 4*P2)
-        let v2 = redp_l(plantard_lv(t2, invm01_v, p2v, cav), p2v);
-        // u = v0 + P0*v1 + P0*P1*v2 ; low 32 bits = product mod 2^32, sign from v2.
-        let lo = v0.add(p0_lo_v.mul(v1)).add(m01_lo_v.mul(v2));
-        let m = v2.ge(p2_half_v);
-        let out = L::select(m, lo.sub(p_lo_v), lo);
-        *res.get_unchecked_mut(j) = out.lane0() as u32;
-        *res.get_unchecked_mut(j + 1) = out.lane1() as u32;
+    while j < N / 4 {
+        let (a0, a1, a2, a3) = final_prime(&plan.t[0], x0, j, cav);
+        let (b0, b1, b2, b3) = final_prime(&plan.t[1], x1, j, cav);
+        let (c0, c1, c2, c3) = final_prime(&plan.t[2], x2, j, cav);
+        let put = |pos: usize, out: L| {
+            *rp.add(pos) = out.lane0() as u32;
+            *rp.add(pos + 1) = out.lane1() as u32;
+        };
+        put(j, crt_one(a0, b0, c0, plan, cav));
+        put(j + N / 4, crt_one(a1, b1, c1, plan, cav));
+        put(j + N / 2, crt_one(a2, b2, c2, plan, cav));
+        put(j + 3 * N / 4, crt_one(a3, b3, c3, plan, cav));
         j += 2;
     }
 }
 
 /// Negacyclic polynomial multiplication: a(X) * b(X) mod (X^1024+1).
 pub fn poly_mul(plan: &mut Plan, a: &[u32; 1024], b: &[u32; 1024]) -> [u32; 1024] {
-    let r0 = convolve_mod(&plan.t[0], a, b);
-    let r1 = convolve_mod(&plan.t[1], a, b);
-    let r2 = convolve_mod(&plan.t[2], a, b);
+    let x0 = convolve_prefinal(&plan.t[0], a, b);
+    let x1 = convolve_prefinal(&plan.t[1], a, b);
+    let x2 = convolve_prefinal(&plan.t[2], a, b);
 
     let mut res = [0u32; N];
     unsafe {
-        crt_combine(&r0, &r1, &r2, plan, &mut res);
+        final_crt(&x0, &x1, &x2, plan, &mut res);
     }
     res
 }
