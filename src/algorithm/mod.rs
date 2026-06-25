@@ -43,9 +43,9 @@ const N: usize = 1024;
 
 // Three primes p with 2048 | (p-1) and primitive root 3; each p < 2^30 so that
 // products of residues fit in u64.
-const P0: u64 = 998244353;
-const P1: u64 = 1004535809;
-const P2: u64 = 985661441;
+const P0: u64 = 134250497;
+const P1: u64 = 134275073;
+const P2: u64 = 134330369;
 const GEN: u64 = 3; // primitive root for all three primes
 
 /// Per-prime NTT tables. Each multiplier `c` is stored alongside its Shoup
@@ -451,7 +451,10 @@ unsafe fn r4_lazy_l(
 ) -> (L, L, L, L) {
     let s0 = red2p_l(a.add(c), p2v);
     let s2 = red2p_l(b.add(d), p2v);
-    let s1 = red2p_l(a.add(p2v).sub(c), p2v);
+    // s1 feeds only Shoup multiplies (non-triv) which tolerate any value < 2^32, so
+    // it stays lazy in [0,4p); the small primes keep y1,y3 (< 6p) well under 2^32.
+    // The triv path red2p's the outputs, so it needs the reduced [0,2p) form.
+    let s1 = if triv { red2p_l(a.add(p2v).sub(c), p2v) } else { a.add(p2v).sub(c) };
     let s3 = b.add(p2v).sub(d); // in [0,4p); feeds only the lazy Shoup
     let is3 = shoup_lazy_lv(s3, icv, icsv, pv);
     let y0 = red2p_l(s0.add(s2), p2v);
@@ -554,17 +557,24 @@ unsafe fn dif_l4_v(t: &mut [L; 16], w: &[u64; N], ws: &[u64; N], icv: L, icsv: L
 
 #[inline(always)]
 unsafe fn dif_l1_v(t: &mut [L; 16], icv: L, icsv: L, pv: L, p2v: L) {
-    let z = icv; // trivial-twiddle path ignores the stage twiddles
+    // Last forward stage (unit stage twiddles). Its outputs feed only the pointwise
+    // Montgomery product, which tolerates inputs up to ~5.6p (K^2 p < 2^32 at the
+    // 27-bit primes), so the four output reductions are skipped: outputs stay [0,4p).
     for h in 0..4 {
         let b4 = 4 * h;
-        let (y0, y1, y2, y3) = r4_lazy_l(
-            *t.get_unchecked(b4), *t.get_unchecked(b4 + 1), *t.get_unchecked(b4 + 2),
-            *t.get_unchecked(b4 + 3), pv, p2v, icv, icsv, true, z, z, z, z, z, z,
-        );
-        *t.get_unchecked_mut(b4) = y0;
-        *t.get_unchecked_mut(b4 + 1) = y1;
-        *t.get_unchecked_mut(b4 + 2) = y2;
-        *t.get_unchecked_mut(b4 + 3) = y3;
+        let a = *t.get_unchecked(b4);
+        let b = *t.get_unchecked(b4 + 1);
+        let c = *t.get_unchecked(b4 + 2);
+        let d = *t.get_unchecked(b4 + 3);
+        let s0 = red2p_l(a.add(c), p2v);
+        let s2 = red2p_l(b.add(d), p2v);
+        let s1 = red2p_l(a.add(p2v).sub(c), p2v);
+        let s3 = b.add(p2v).sub(d); // [0,4p); feeds the 4th-root Shoup
+        let is3 = shoup_lazy_lv(s3, icv, icsv, pv);
+        *t.get_unchecked_mut(b4) = s0.add(s2); // [0,4p)
+        *t.get_unchecked_mut(b4 + 1) = s1.add(is3); // [0,4p)
+        *t.get_unchecked_mut(b4 + 2) = s0.add(p2v).sub(s2); // [0,4p)
+        *t.get_unchecked_mut(b4 + 3) = s1.add(p2v).sub(is3); // [0,4p)
     }
 }
 
