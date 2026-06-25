@@ -597,9 +597,14 @@ unsafe fn r4_lazy_l(
     }
 }
 
-/// Forward radix-4 DIF of both operands in lockstep (lanes), through the middle
-/// stages only (the psi pre-weight is folded into the first stage's load). The
-/// last two stages are completed in the fused `boundary` pass.
+/// Forward radix-64 = radix-4(len=256) ∘ radix-4(len=64) ∘ radix-4(len=16) of both
+/// operands in lockstep, fusing all three forward middle stages into ONE memory pass.
+/// For each jj in 0..16 there is exactly one butterfly, gathering the 64 elements at
+/// positions jj + k*16 (the whole array, stride 16) into 64 named locals (so the tile
+/// scalarizes to registers), running the three radix-4 sub-stages with the psi pre-weight
+/// folded into the gather, and scattering back. No intermediate xab round-trips: the last
+/// two stages used to be a separate radix-16 pass; folding in the len=256 stage removes
+/// another full store+load of the spectrum.
 #[allow(clippy::too_many_arguments)]
 #[cfg_attr(target_arch = "wasm32", target_feature(enable = "simd128"))]
 unsafe fn dif4_2_simd(
@@ -610,91 +615,282 @@ unsafe fn dif4_2_simd(
     let p2v = L::splat(p << 1);
     let cav = L::splat((1u64 << 32) + 2);
     let icpv = L::splat(icp);
-    // First stage (half-block N/4) with the psi pre-weight folded into the load. `ab`
-    // holds the (a,b) operands already packed into lane pairs (built once, shared by all
-    // three primes), so each input is a single v128 load.
-    let len0 = N / 4;
-    let mut j = 0;
-    while j < len0 {
-        let e = j; // step = 1
-        let (t1p, t2p, t3p) = twiddles3_splat(wp, e);
-        let pw = |idx: usize| -> L {
-            plantard_lv(*ab.get_unchecked(idx), L::splat(*psip.get_unchecked(idx)), pv, cav)
-        };
-        let (y0, y1, y2, y3) = r4_lazy_l(
-            pw(j), pw(j + len0), pw(j + 2 * len0), pw(j + 3 * len0), pv, p2v, cav, icpv,
-            e == 0, t1p, t2p, t3p,
-        );
-        *xab.get_unchecked_mut(j) = y0;
-        *xab.get_unchecked_mut(j + len0) = y1;
-        *xab.get_unchecked_mut(j + 2 * len0) = y2;
-        *xab.get_unchecked_mut(j + 3 * len0) = y3;
-        j += 1;
-    }
-    // The two remaining strided stages (half-blocks 64 and 16) are fused into ONE
-    // radix-16 pass over xab, halving this section's memory round-trips. Column-outer
-    // (twiddles hoisted across the 4 blocks) with the 16-element tile held in explicit
-    // named locals so it scalarizes to registers despite the strided gather/scatter.
-    let icp_pack = (icpv, pv, p2v, cav);
     let mut jj = 0;
     while jj < 16 {
-        // sub-stage A (len=64) twiddles per group k: w^{4jj+64k}; sub-stage B: w^{16jj}.
-        let aw0 = twiddles3_splat(wp, 4 * jj);
-        let aw1 = twiddles3_splat(wp, 4 * jj + 64);
-        let aw2 = twiddles3_splat(wp, 4 * jj + 128);
-        let aw3 = twiddles3_splat(wp, 4 * jj + 192);
-        let bw = twiddles3_splat(wp, 16 * jj);
-        let trivb = jj == 0;
-        let mut i = 0;
-        while i < N {
-            let base = i + jj;
-            r16_mid_tile(xab.as_mut_ptr().add(base), aw0, aw1, aw2, aw3, bw, jj == 0, trivb, icp_pack);
-            i += 256;
-        }
+        let g = |k: usize| -> L {
+            plantard_lv(*ab.get_unchecked(jj + k * 16), L::splat(*psip.get_unchecked(jj + k * 16)), pv, cav)
+        };
+    let mut t0 = g(0);
+    let mut t1 = g(1);
+    let mut t2 = g(2);
+    let mut t3 = g(3);
+    let mut t4 = g(4);
+    let mut t5 = g(5);
+    let mut t6 = g(6);
+    let mut t7 = g(7);
+    let mut t8 = g(8);
+    let mut t9 = g(9);
+    let mut t10 = g(10);
+    let mut t11 = g(11);
+    let mut t12 = g(12);
+    let mut t13 = g(13);
+    let mut t14 = g(14);
+    let mut t15 = g(15);
+    let mut t16 = g(16);
+    let mut t17 = g(17);
+    let mut t18 = g(18);
+    let mut t19 = g(19);
+    let mut t20 = g(20);
+    let mut t21 = g(21);
+    let mut t22 = g(22);
+    let mut t23 = g(23);
+    let mut t24 = g(24);
+    let mut t25 = g(25);
+    let mut t26 = g(26);
+    let mut t27 = g(27);
+    let mut t28 = g(28);
+    let mut t29 = g(29);
+    let mut t30 = g(30);
+    let mut t31 = g(31);
+    let mut t32 = g(32);
+    let mut t33 = g(33);
+    let mut t34 = g(34);
+    let mut t35 = g(35);
+    let mut t36 = g(36);
+    let mut t37 = g(37);
+    let mut t38 = g(38);
+    let mut t39 = g(39);
+    let mut t40 = g(40);
+    let mut t41 = g(41);
+    let mut t42 = g(42);
+    let mut t43 = g(43);
+    let mut t44 = g(44);
+    let mut t45 = g(45);
+    let mut t46 = g(46);
+    let mut t47 = g(47);
+    let mut t48 = g(48);
+    let mut t49 = g(49);
+    let mut t50 = g(50);
+    let mut t51 = g(51);
+    let mut t52 = g(52);
+    let mut t53 = g(53);
+    let mut t54 = g(54);
+    let mut t55 = g(55);
+    let mut t56 = g(56);
+    let mut t57 = g(57);
+    let mut t58 = g(58);
+    let mut t59 = g(59);
+    let mut t60 = g(60);
+    let mut t61 = g(61);
+    let mut t62 = g(62);
+    let mut t63 = g(63);
+    // sub-stage 1 (len=256): groups {g,g+16,g+32,g+48}, twiddle w^{jj+16g}
+    let e = jj + 16*0;
+    let tw = twiddles3_splat(wp, e);
+    let (ra,rb,rc,rd) = r4_lazy_l(t0,t16,t32,t48, pv,p2v,cav,icpv, e==0, tw.0,tw.1,tw.2);
+    t0=ra; t16=rb; t32=rc; t48=rd;
+    let e = jj + 16*1;
+    let tw = twiddles3_splat(wp, e);
+    let (ra,rb,rc,rd) = r4_lazy_l(t1,t17,t33,t49, pv,p2v,cav,icpv, e==0, tw.0,tw.1,tw.2);
+    t1=ra; t17=rb; t33=rc; t49=rd;
+    let e = jj + 16*2;
+    let tw = twiddles3_splat(wp, e);
+    let (ra,rb,rc,rd) = r4_lazy_l(t2,t18,t34,t50, pv,p2v,cav,icpv, e==0, tw.0,tw.1,tw.2);
+    t2=ra; t18=rb; t34=rc; t50=rd;
+    let e = jj + 16*3;
+    let tw = twiddles3_splat(wp, e);
+    let (ra,rb,rc,rd) = r4_lazy_l(t3,t19,t35,t51, pv,p2v,cav,icpv, e==0, tw.0,tw.1,tw.2);
+    t3=ra; t19=rb; t35=rc; t51=rd;
+    let e = jj + 16*4;
+    let tw = twiddles3_splat(wp, e);
+    let (ra,rb,rc,rd) = r4_lazy_l(t4,t20,t36,t52, pv,p2v,cav,icpv, e==0, tw.0,tw.1,tw.2);
+    t4=ra; t20=rb; t36=rc; t52=rd;
+    let e = jj + 16*5;
+    let tw = twiddles3_splat(wp, e);
+    let (ra,rb,rc,rd) = r4_lazy_l(t5,t21,t37,t53, pv,p2v,cav,icpv, e==0, tw.0,tw.1,tw.2);
+    t5=ra; t21=rb; t37=rc; t53=rd;
+    let e = jj + 16*6;
+    let tw = twiddles3_splat(wp, e);
+    let (ra,rb,rc,rd) = r4_lazy_l(t6,t22,t38,t54, pv,p2v,cav,icpv, e==0, tw.0,tw.1,tw.2);
+    t6=ra; t22=rb; t38=rc; t54=rd;
+    let e = jj + 16*7;
+    let tw = twiddles3_splat(wp, e);
+    let (ra,rb,rc,rd) = r4_lazy_l(t7,t23,t39,t55, pv,p2v,cav,icpv, e==0, tw.0,tw.1,tw.2);
+    t7=ra; t23=rb; t39=rc; t55=rd;
+    let e = jj + 16*8;
+    let tw = twiddles3_splat(wp, e);
+    let (ra,rb,rc,rd) = r4_lazy_l(t8,t24,t40,t56, pv,p2v,cav,icpv, e==0, tw.0,tw.1,tw.2);
+    t8=ra; t24=rb; t40=rc; t56=rd;
+    let e = jj + 16*9;
+    let tw = twiddles3_splat(wp, e);
+    let (ra,rb,rc,rd) = r4_lazy_l(t9,t25,t41,t57, pv,p2v,cav,icpv, e==0, tw.0,tw.1,tw.2);
+    t9=ra; t25=rb; t41=rc; t57=rd;
+    let e = jj + 16*10;
+    let tw = twiddles3_splat(wp, e);
+    let (ra,rb,rc,rd) = r4_lazy_l(t10,t26,t42,t58, pv,p2v,cav,icpv, e==0, tw.0,tw.1,tw.2);
+    t10=ra; t26=rb; t42=rc; t58=rd;
+    let e = jj + 16*11;
+    let tw = twiddles3_splat(wp, e);
+    let (ra,rb,rc,rd) = r4_lazy_l(t11,t27,t43,t59, pv,p2v,cav,icpv, e==0, tw.0,tw.1,tw.2);
+    t11=ra; t27=rb; t43=rc; t59=rd;
+    let e = jj + 16*12;
+    let tw = twiddles3_splat(wp, e);
+    let (ra,rb,rc,rd) = r4_lazy_l(t12,t28,t44,t60, pv,p2v,cav,icpv, e==0, tw.0,tw.1,tw.2);
+    t12=ra; t28=rb; t44=rc; t60=rd;
+    let e = jj + 16*13;
+    let tw = twiddles3_splat(wp, e);
+    let (ra,rb,rc,rd) = r4_lazy_l(t13,t29,t45,t61, pv,p2v,cav,icpv, e==0, tw.0,tw.1,tw.2);
+    t13=ra; t29=rb; t45=rc; t61=rd;
+    let e = jj + 16*14;
+    let tw = twiddles3_splat(wp, e);
+    let (ra,rb,rc,rd) = r4_lazy_l(t14,t30,t46,t62, pv,p2v,cav,icpv, e==0, tw.0,tw.1,tw.2);
+    t14=ra; t30=rb; t46=rc; t62=rd;
+    let e = jj + 16*15;
+    let tw = twiddles3_splat(wp, e);
+    let (ra,rb,rc,rd) = r4_lazy_l(t15,t31,t47,t63, pv,p2v,cav,icpv, e==0, tw.0,tw.1,tw.2);
+    t15=ra; t31=rb; t47=rc; t63=rd;
+    // sub-stage 2 (len=64): groups {16q+l,+4,+8,+12}, twiddle w^{4jj+64l}
+    let e = 4*jj + 64*0;
+    let tw = twiddles3_splat(wp, e); let tr = e==0;
+    let (ra,rb,rc,rd) = r4_lazy_l(t0,t4,t8,t12, pv,p2v,cav,icpv, tr, tw.0,tw.1,tw.2);
+    t0=ra; t4=rb; t8=rc; t12=rd;
+    let (ra,rb,rc,rd) = r4_lazy_l(t16,t20,t24,t28, pv,p2v,cav,icpv, tr, tw.0,tw.1,tw.2);
+    t16=ra; t20=rb; t24=rc; t28=rd;
+    let (ra,rb,rc,rd) = r4_lazy_l(t32,t36,t40,t44, pv,p2v,cav,icpv, tr, tw.0,tw.1,tw.2);
+    t32=ra; t36=rb; t40=rc; t44=rd;
+    let (ra,rb,rc,rd) = r4_lazy_l(t48,t52,t56,t60, pv,p2v,cav,icpv, tr, tw.0,tw.1,tw.2);
+    t48=ra; t52=rb; t56=rc; t60=rd;
+    let e = 4*jj + 64*1;
+    let tw = twiddles3_splat(wp, e); let tr = e==0;
+    let (ra,rb,rc,rd) = r4_lazy_l(t1,t5,t9,t13, pv,p2v,cav,icpv, tr, tw.0,tw.1,tw.2);
+    t1=ra; t5=rb; t9=rc; t13=rd;
+    let (ra,rb,rc,rd) = r4_lazy_l(t17,t21,t25,t29, pv,p2v,cav,icpv, tr, tw.0,tw.1,tw.2);
+    t17=ra; t21=rb; t25=rc; t29=rd;
+    let (ra,rb,rc,rd) = r4_lazy_l(t33,t37,t41,t45, pv,p2v,cav,icpv, tr, tw.0,tw.1,tw.2);
+    t33=ra; t37=rb; t41=rc; t45=rd;
+    let (ra,rb,rc,rd) = r4_lazy_l(t49,t53,t57,t61, pv,p2v,cav,icpv, tr, tw.0,tw.1,tw.2);
+    t49=ra; t53=rb; t57=rc; t61=rd;
+    let e = 4*jj + 64*2;
+    let tw = twiddles3_splat(wp, e); let tr = e==0;
+    let (ra,rb,rc,rd) = r4_lazy_l(t2,t6,t10,t14, pv,p2v,cav,icpv, tr, tw.0,tw.1,tw.2);
+    t2=ra; t6=rb; t10=rc; t14=rd;
+    let (ra,rb,rc,rd) = r4_lazy_l(t18,t22,t26,t30, pv,p2v,cav,icpv, tr, tw.0,tw.1,tw.2);
+    t18=ra; t22=rb; t26=rc; t30=rd;
+    let (ra,rb,rc,rd) = r4_lazy_l(t34,t38,t42,t46, pv,p2v,cav,icpv, tr, tw.0,tw.1,tw.2);
+    t34=ra; t38=rb; t42=rc; t46=rd;
+    let (ra,rb,rc,rd) = r4_lazy_l(t50,t54,t58,t62, pv,p2v,cav,icpv, tr, tw.0,tw.1,tw.2);
+    t50=ra; t54=rb; t58=rc; t62=rd;
+    let e = 4*jj + 64*3;
+    let tw = twiddles3_splat(wp, e); let tr = e==0;
+    let (ra,rb,rc,rd) = r4_lazy_l(t3,t7,t11,t15, pv,p2v,cav,icpv, tr, tw.0,tw.1,tw.2);
+    t3=ra; t7=rb; t11=rc; t15=rd;
+    let (ra,rb,rc,rd) = r4_lazy_l(t19,t23,t27,t31, pv,p2v,cav,icpv, tr, tw.0,tw.1,tw.2);
+    t19=ra; t23=rb; t27=rc; t31=rd;
+    let (ra,rb,rc,rd) = r4_lazy_l(t35,t39,t43,t47, pv,p2v,cav,icpv, tr, tw.0,tw.1,tw.2);
+    t35=ra; t39=rb; t43=rc; t47=rd;
+    let (ra,rb,rc,rd) = r4_lazy_l(t51,t55,t59,t63, pv,p2v,cav,icpv, tr, tw.0,tw.1,tw.2);
+    t51=ra; t55=rb; t59=rc; t63=rd;
+    // sub-stage 3 (len=16): groups {16q+4m..16q+4m+3}, shared twiddle w^{16jj}
+    let e = 16*jj; let tw = twiddles3_splat(wp, e); let tr = e==0;
+    let (ra,rb,rc,rd) = r4_lazy_l(t0,t1,t2,t3, pv,p2v,cav,icpv, tr, tw.0,tw.1,tw.2);
+    t0=ra; t1=rb; t2=rc; t3=rd;
+    let (ra,rb,rc,rd) = r4_lazy_l(t4,t5,t6,t7, pv,p2v,cav,icpv, tr, tw.0,tw.1,tw.2);
+    t4=ra; t5=rb; t6=rc; t7=rd;
+    let (ra,rb,rc,rd) = r4_lazy_l(t8,t9,t10,t11, pv,p2v,cav,icpv, tr, tw.0,tw.1,tw.2);
+    t8=ra; t9=rb; t10=rc; t11=rd;
+    let (ra,rb,rc,rd) = r4_lazy_l(t12,t13,t14,t15, pv,p2v,cav,icpv, tr, tw.0,tw.1,tw.2);
+    t12=ra; t13=rb; t14=rc; t15=rd;
+    let (ra,rb,rc,rd) = r4_lazy_l(t16,t17,t18,t19, pv,p2v,cav,icpv, tr, tw.0,tw.1,tw.2);
+    t16=ra; t17=rb; t18=rc; t19=rd;
+    let (ra,rb,rc,rd) = r4_lazy_l(t20,t21,t22,t23, pv,p2v,cav,icpv, tr, tw.0,tw.1,tw.2);
+    t20=ra; t21=rb; t22=rc; t23=rd;
+    let (ra,rb,rc,rd) = r4_lazy_l(t24,t25,t26,t27, pv,p2v,cav,icpv, tr, tw.0,tw.1,tw.2);
+    t24=ra; t25=rb; t26=rc; t27=rd;
+    let (ra,rb,rc,rd) = r4_lazy_l(t28,t29,t30,t31, pv,p2v,cav,icpv, tr, tw.0,tw.1,tw.2);
+    t28=ra; t29=rb; t30=rc; t31=rd;
+    let (ra,rb,rc,rd) = r4_lazy_l(t32,t33,t34,t35, pv,p2v,cav,icpv, tr, tw.0,tw.1,tw.2);
+    t32=ra; t33=rb; t34=rc; t35=rd;
+    let (ra,rb,rc,rd) = r4_lazy_l(t36,t37,t38,t39, pv,p2v,cav,icpv, tr, tw.0,tw.1,tw.2);
+    t36=ra; t37=rb; t38=rc; t39=rd;
+    let (ra,rb,rc,rd) = r4_lazy_l(t40,t41,t42,t43, pv,p2v,cav,icpv, tr, tw.0,tw.1,tw.2);
+    t40=ra; t41=rb; t42=rc; t43=rd;
+    let (ra,rb,rc,rd) = r4_lazy_l(t44,t45,t46,t47, pv,p2v,cav,icpv, tr, tw.0,tw.1,tw.2);
+    t44=ra; t45=rb; t46=rc; t47=rd;
+    let (ra,rb,rc,rd) = r4_lazy_l(t48,t49,t50,t51, pv,p2v,cav,icpv, tr, tw.0,tw.1,tw.2);
+    t48=ra; t49=rb; t50=rc; t51=rd;
+    let (ra,rb,rc,rd) = r4_lazy_l(t52,t53,t54,t55, pv,p2v,cav,icpv, tr, tw.0,tw.1,tw.2);
+    t52=ra; t53=rb; t54=rc; t55=rd;
+    let (ra,rb,rc,rd) = r4_lazy_l(t56,t57,t58,t59, pv,p2v,cav,icpv, tr, tw.0,tw.1,tw.2);
+    t56=ra; t57=rb; t58=rc; t59=rd;
+    let (ra,rb,rc,rd) = r4_lazy_l(t60,t61,t62,t63, pv,p2v,cav,icpv, tr, tw.0,tw.1,tw.2);
+    t60=ra; t61=rb; t62=rc; t63=rd;
+    // scatter
+    *xab.get_unchecked_mut(jj + 0*16) = t0;
+    *xab.get_unchecked_mut(jj + 1*16) = t1;
+    *xab.get_unchecked_mut(jj + 2*16) = t2;
+    *xab.get_unchecked_mut(jj + 3*16) = t3;
+    *xab.get_unchecked_mut(jj + 4*16) = t4;
+    *xab.get_unchecked_mut(jj + 5*16) = t5;
+    *xab.get_unchecked_mut(jj + 6*16) = t6;
+    *xab.get_unchecked_mut(jj + 7*16) = t7;
+    *xab.get_unchecked_mut(jj + 8*16) = t8;
+    *xab.get_unchecked_mut(jj + 9*16) = t9;
+    *xab.get_unchecked_mut(jj + 10*16) = t10;
+    *xab.get_unchecked_mut(jj + 11*16) = t11;
+    *xab.get_unchecked_mut(jj + 12*16) = t12;
+    *xab.get_unchecked_mut(jj + 13*16) = t13;
+    *xab.get_unchecked_mut(jj + 14*16) = t14;
+    *xab.get_unchecked_mut(jj + 15*16) = t15;
+    *xab.get_unchecked_mut(jj + 16*16) = t16;
+    *xab.get_unchecked_mut(jj + 17*16) = t17;
+    *xab.get_unchecked_mut(jj + 18*16) = t18;
+    *xab.get_unchecked_mut(jj + 19*16) = t19;
+    *xab.get_unchecked_mut(jj + 20*16) = t20;
+    *xab.get_unchecked_mut(jj + 21*16) = t21;
+    *xab.get_unchecked_mut(jj + 22*16) = t22;
+    *xab.get_unchecked_mut(jj + 23*16) = t23;
+    *xab.get_unchecked_mut(jj + 24*16) = t24;
+    *xab.get_unchecked_mut(jj + 25*16) = t25;
+    *xab.get_unchecked_mut(jj + 26*16) = t26;
+    *xab.get_unchecked_mut(jj + 27*16) = t27;
+    *xab.get_unchecked_mut(jj + 28*16) = t28;
+    *xab.get_unchecked_mut(jj + 29*16) = t29;
+    *xab.get_unchecked_mut(jj + 30*16) = t30;
+    *xab.get_unchecked_mut(jj + 31*16) = t31;
+    *xab.get_unchecked_mut(jj + 32*16) = t32;
+    *xab.get_unchecked_mut(jj + 33*16) = t33;
+    *xab.get_unchecked_mut(jj + 34*16) = t34;
+    *xab.get_unchecked_mut(jj + 35*16) = t35;
+    *xab.get_unchecked_mut(jj + 36*16) = t36;
+    *xab.get_unchecked_mut(jj + 37*16) = t37;
+    *xab.get_unchecked_mut(jj + 38*16) = t38;
+    *xab.get_unchecked_mut(jj + 39*16) = t39;
+    *xab.get_unchecked_mut(jj + 40*16) = t40;
+    *xab.get_unchecked_mut(jj + 41*16) = t41;
+    *xab.get_unchecked_mut(jj + 42*16) = t42;
+    *xab.get_unchecked_mut(jj + 43*16) = t43;
+    *xab.get_unchecked_mut(jj + 44*16) = t44;
+    *xab.get_unchecked_mut(jj + 45*16) = t45;
+    *xab.get_unchecked_mut(jj + 46*16) = t46;
+    *xab.get_unchecked_mut(jj + 47*16) = t47;
+    *xab.get_unchecked_mut(jj + 48*16) = t48;
+    *xab.get_unchecked_mut(jj + 49*16) = t49;
+    *xab.get_unchecked_mut(jj + 50*16) = t50;
+    *xab.get_unchecked_mut(jj + 51*16) = t51;
+    *xab.get_unchecked_mut(jj + 52*16) = t52;
+    *xab.get_unchecked_mut(jj + 53*16) = t53;
+    *xab.get_unchecked_mut(jj + 54*16) = t54;
+    *xab.get_unchecked_mut(jj + 55*16) = t55;
+    *xab.get_unchecked_mut(jj + 56*16) = t56;
+    *xab.get_unchecked_mut(jj + 57*16) = t57;
+    *xab.get_unchecked_mut(jj + 58*16) = t58;
+    *xab.get_unchecked_mut(jj + 59*16) = t59;
+    *xab.get_unchecked_mut(jj + 60*16) = t60;
+    *xab.get_unchecked_mut(jj + 61*16) = t61;
+    *xab.get_unchecked_mut(jj + 62*16) = t62;
+    *xab.get_unchecked_mut(jj + 63*16) = t63;
         jj += 1;
     }
-}
-
-/// One fused radix-16 = radix-4(len=64) ∘ radix-4(len=16) butterfly on the 16 elements at
-/// `p[0], p[16], …, p[240]`. The tile is held in 16 named locals (guaranteed register
-/// residency under the strided access). `aw{k}` are the sub-stage-A twiddles for group k;
-/// `bw` the shared sub-stage-B twiddle.
-#[allow(clippy::too_many_arguments)]
-#[inline(always)]
-unsafe fn r16_mid_tile(
-    p: *mut L, aw0: (L, L, L), aw1: (L, L, L), aw2: (L, L, L), aw3: (L, L, L), bw: (L, L, L),
-    triva0: bool, trivb: bool, pk: (L, L, L, L),
-) {
-    let (icpv, pv, p2v, cav) = pk;
-    let g = |q: usize| *p.add(q * 16);
-    let (mut t0, mut t1, mut t2, mut t3) = (g(0), g(1), g(2), g(3));
-    let (mut t4, mut t5, mut t6, mut t7) = (g(4), g(5), g(6), g(7));
-    let (mut t8, mut t9, mut t10, mut t11) = (g(8), g(9), g(10), g(11));
-    let (mut t12, mut t13, mut t14, mut t15) = (g(12), g(13), g(14), g(15));
-    // sub-stage A: groups {k,k+4,k+8,k+12}, k=0..3.
-    let r = |a, b, c, d, tw: (L, L, L), tr| r4_lazy_l(a, b, c, d, pv, p2v, cav, icpv, tr, tw.0, tw.1, tw.2);
-    let (a, b, c, d) = r(t0, t4, t8, t12, aw0, triva0);
-    t0 = a; t4 = b; t8 = c; t12 = d;
-    let (a, b, c, d) = r(t1, t5, t9, t13, aw1, false);
-    t1 = a; t5 = b; t9 = c; t13 = d;
-    let (a, b, c, d) = r(t2, t6, t10, t14, aw2, false);
-    t2 = a; t6 = b; t10 = c; t14 = d;
-    let (a, b, c, d) = r(t3, t7, t11, t15, aw3, false);
-    t3 = a; t7 = b; t11 = c; t15 = d;
-    // sub-stage B: groups {4m..4m+3}, shared twiddle bw.
-    let (a, b, c, d) = r(t0, t1, t2, t3, bw, trivb);
-    t0 = a; t1 = b; t2 = c; t3 = d;
-    let (a, b, c, d) = r(t4, t5, t6, t7, bw, trivb);
-    t4 = a; t5 = b; t6 = c; t7 = d;
-    let (a, b, c, d) = r(t8, t9, t10, t11, bw, trivb);
-    t8 = a; t9 = b; t10 = c; t11 = d;
-    let (a, b, c, d) = r(t12, t13, t14, t15, bw, trivb);
-    t12 = a; t13 = b; t14 = c; t15 = d;
-    let mut s = |q: usize, v: L| *p.add(q * 16) = v;
-    s(0, t0); s(1, t1); s(2, t2); s(3, t3);
-    s(4, t4); s(5, t5); s(6, t6); s(7, t7);
-    s(8, t8); s(9, t9); s(10, t10); s(11, t11);
-    s(12, t12); s(13, t13); s(14, t14); s(15, t15);
 }
 
 // ---- Contiguous 16-element tile sub-stages (used by the fused boundary pass) ----
