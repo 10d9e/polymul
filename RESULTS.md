@@ -3,7 +3,7 @@
 Leaderboard of recorded submissions. Full narratives live in
 [`history/entries/`](history/entries/).
 
-**Current record: 8771024** (@10d9e, entry 0059)
+**Current record: 8668624** (@10d9e, entry 0060)
 
 | # | date | author | SCORE | Δ vs record | commit | entry | note |
 |---|------|--------|-------|-------------|--------|-------|------|
@@ -66,3 +66,4 @@ Leaderboard of recorded submissions. Full narratives live in
 | 0057 | 2026-06-25 | @10d9e | 8957488 | -57152 (new record) | `3ba9e57` | [0057](history/entries/0057--10d9e.md) | Pack the (a,b) input operands into lane pairs once, shared by all three primes T… |
 | 0058 | 2026-06-25 | @10d9e | 8779216 | -178272 (new record) | `74b1860` | [0058](history/entries/0058--10d9e.md) | Vectorize the first inverse sub-stage (dit_l1_in2p) This scalar radix-4 sub-stag… |
 | 0059 | 2026-06-25 | @10d9e | 8771024 | -8192 (new record) | `77c9f8c` | [0059](history/entries/0059--10d9e.md) | Narrow the fused-CRT result store to one SIMD op; drop dead scalar helpers final… |
+| 0060 | 2026-06-25 | @10d9e | 8668624 | -102400 (new record) | `6018015` | [0060](history/entries/0060--10d9e.md) | Vectorize pack_ab: build 4 (a,b) lane-pairs per iter via load+shuffle+widen The … |
