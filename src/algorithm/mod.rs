@@ -266,74 +266,9 @@ fn r4_lazy(
     }
 }
 
-/// Fused last two forward DIF stages (half-block sizes 4 then 1) on one contiguous
-/// 16-element tile held in registers — one memory pass instead of two. The first
-/// fused stage uses 16th-root twiddles w^{64*g} (already in the `w` table); the
-/// second is all trivial.
-#[inline(always)]
-fn dif4_last16(x: &mut [u64; N], w: &[u32; N], ws: &[u32; N], ic: u32, ics: u32, p: u64) {
-    let p2 = p << 1;
-    let mut i = 0;
-    while i < N {
-        let mut t = [0u64; 16];
-        unsafe {
-            for k in 0..16 {
-                *t.get_unchecked_mut(k) = *x.get_unchecked(i + k);
-            }
-            // half-block size 4: groups (g, g+4, g+8, g+12), twiddle exponent e = 64*g.
-            for g in 0..4 {
-                let e = 64 * g;
-                let (a, b, c, d) = (
-                    *t.get_unchecked(g),
-                    *t.get_unchecked(g + 4),
-                    *t.get_unchecked(g + 8),
-                    *t.get_unchecked(g + 12),
-                );
-                let (t1c, t1s, t2c, t2s, t3c, t3s) = twiddles3(w, ws, e);
-                let (y0, y1, y2, y3) =
-                    r4_lazy(a, b, c, d, p, p2, ic, ics, e == 0, t1c, t1s, t2c, t2s, t3c, t3s);
-                *t.get_unchecked_mut(g) = y0;
-                *t.get_unchecked_mut(g + 4) = y1;
-                *t.get_unchecked_mut(g + 8) = y2;
-                *t.get_unchecked_mut(g + 12) = y3;
-            }
-            // half-block size 1: groups (4h, 4h+1, 4h+2, 4h+3), all trivial twiddles.
-            for h in 0..4 {
-                let b4 = 4 * h;
-                let (y0, y1, y2, y3) = r4_lazy(
-                    *t.get_unchecked(b4),
-                    *t.get_unchecked(b4 + 1),
-                    *t.get_unchecked(b4 + 2),
-                    *t.get_unchecked(b4 + 3),
-                    p,
-                    p2,
-                    ic,
-                    ics,
-                    true,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                );
-                *t.get_unchecked_mut(b4) = y0;
-                *t.get_unchecked_mut(b4 + 1) = y1;
-                *t.get_unchecked_mut(b4 + 2) = y2;
-                *t.get_unchecked_mut(b4 + 3) = y3;
-            }
-            for k in 0..16 {
-                *x.get_unchecked_mut(i + k) = *t.get_unchecked(k);
-            }
-        }
-        i += 16;
-    }
-}
-
-/// Forward radix-4 DIF of both operands in lockstep. The psi negacyclic pre-weight
-/// is folded into the first stage's load (raw a[j],b[j] are weighted on the way in,
-/// no standalone pre-weight pass), and the last two stages (contiguous 16-element
-/// blocks) are fused into a single register pass.
+/// Forward radix-4 DIF of both operands in lockstep, through the middle stages only
+/// (the psi pre-weight is folded into the first stage's load). The last two stages are
+/// completed in the fused `boundary` pass.
 #[allow(clippy::too_many_arguments)]
 #[inline(always)]
 fn dif4_2(
@@ -391,8 +326,7 @@ fn dif4_2(
         }
         len >>= 2;
     }
-    dif4_last16(xa, w, ws, ic, ics, p);
-    dif4_last16(xb, w, ws, ic, ics, p);
+    // The last two DIF stages are completed in the fused `boundary` pass.
 }
 
 /// Load the three stage twiddles (w^e, w^{2e}, w^{3e}) and their Shoup constants.
@@ -440,71 +374,15 @@ fn r4_lazy_dit(
     (s0 + s2, s1 + js3, s0 + p2 - s2, s1 + p2 - js3) // each in [0,4p), unreduced
 }
 
-/// Fused first two inverse DIT stages (half-block sizes 1 then 4) on one contiguous
-/// 16-element tile in registers — one memory pass instead of two. The second fused
-/// stage uses the inverse 16th-root twiddles iw^{64*g} (already in the `iw` table).
-#[inline(always)]
-fn dit4_first16(
-    x: &mut [u64; N], fb: &[u64; N], pinv: u32, iw: &[u32; N], iws: &[u32; N], jc: u32, jcs: u32, p: u64,
-) {
-    let p2 = p << 1;
-    let mut i = 0;
-    while i < N {
-        let mut t = [0u64; 16];
-        unsafe {
-            // Fold the spectral pointwise product into the first inverse stage's
-            // load: x holds fa, multiply by fb (Montgomery) as the tile is read in.
-            for k in 0..16 {
-                *t.get_unchecked_mut(k) = mont_mul(*x.get_unchecked(i + k), *fb.get_unchecked(i + k), p, pinv);
-            }
-            // half-block size 1: groups (4h..4h+3), trivial twiddles.
-            for h in 0..4 {
-                let b4 = 4 * h;
-                let (o0, o1, o2, o3) = r4_lazy_dit(
-                    *t.get_unchecked(b4),
-                    *t.get_unchecked(b4 + 1),
-                    *t.get_unchecked(b4 + 2),
-                    *t.get_unchecked(b4 + 3),
-                    p, p2, jc, jcs, true, 0, 0, 0, 0, 0, 0,
-                );
-                *t.get_unchecked_mut(b4) = o0;
-                *t.get_unchecked_mut(b4 + 1) = o1;
-                *t.get_unchecked_mut(b4 + 2) = o2;
-                *t.get_unchecked_mut(b4 + 3) = o3;
-            }
-            // half-block size 4: groups (g, g+4, g+8, g+12), twiddle exponent e = 64*g.
-            for g in 0..4 {
-                let e = 64 * g;
-                let (it1c, it1s, it2c, it2s, it3c, it3s) = twiddles3(iw, iws, e);
-                let (o0, o1, o2, o3) = r4_lazy_dit(
-                    *t.get_unchecked(g),
-                    *t.get_unchecked(g + 4),
-                    *t.get_unchecked(g + 8),
-                    *t.get_unchecked(g + 12),
-                    p, p2, jc, jcs, e == 0, it1c, it1s, it2c, it2s, it3c, it3s,
-                );
-                *t.get_unchecked_mut(g) = o0;
-                *t.get_unchecked_mut(g + 4) = o1;
-                *t.get_unchecked_mut(g + 8) = o2;
-                *t.get_unchecked_mut(g + 12) = o3;
-            }
-            for k in 0..16 {
-                *x.get_unchecked_mut(i + k) = *t.get_unchecked(k);
-            }
-        }
-        i += 16;
-    }
-}
-
-/// Inverse radix-4 DIT, digit-reversed -> natural. Lazy: values in [0, 2p). The
-/// first two stages (contiguous 16-element blocks) are fused into one register pass.
+/// Remaining inverse DIT stages (the first two are done by `boundary`): the middle
+/// strided stages (half-blocks 16, 64) then the final stage (half-block 256) with the
+/// psi^{-1}*N^{-1} post-weight folded into the output store. Values in [0,4p).
 #[allow(clippy::too_many_arguments)]
 #[inline(always)]
-fn dit4(
-    x: &mut [u64; N], fb: &[u64; N], pinv: u32, iw: &[u32; N], iws: &[u32; N], jc: u32, jcs: u32,
+fn dit4_rest(
+    x: &mut [u64; N], iw: &[u32; N], iws: &[u32; N], jc: u32, jcs: u32,
     ipsi: &[u32; N], ipsis: &[u32; N], p: u64,
 ) {
-    dit4_first16(x, fb, pinv, iw, iws, jc, jcs, p);
     let mut len = 16;
     while len < N / 4 {
         let step = N / (4 * len);
@@ -571,25 +449,115 @@ fn fwd2(a: &[u32; N], b: &[u32; N], t: &PrimeTables) -> ([u64; N], [u64; N]) {
     (xa, xb)
 }
 
-/// Inverse negacyclic transform of `fa` (the pointwise product is folded into the
-/// first DIT stage's load with `fb`), then post-weight by psi^{-j}*N^{-1}.
+// ---- Contiguous 16-element tile sub-stages (used by the fused boundary pass) ----
+
 #[inline(always)]
-fn inv(mut fa: [u64; N], fb: &[u64; N], t: &PrimeTables) -> [u64; N] {
-    // J = w^{-N/4} lives at index N/4 of the inverse twiddle table. The pointwise
-    // product (first stage) and psi^{-1}*N^{-1} post-weight (last stage) are folded
-    // into the DIT, so there are no standalone passes around it.
-    dit4(
-        &mut fa, fb, t.pinv, &t.iw, &t.iws, t.iw[N / 4], t.iws[N / 4], &t.ipsi, &t.ipsis, t.p,
-    );
-    fa
+unsafe fn dif_l4(t: &mut [u64; 16], w: &[u32; N], ws: &[u32; N], ic: u32, ics: u32, p: u64, p2: u64) {
+    for g in 0..4 {
+        let e = 64 * g;
+        let (t1c, t1s, t2c, t2s, t3c, t3s) = twiddles3(w, ws, e);
+        let (y0, y1, y2, y3) = r4_lazy(
+            *t.get_unchecked(g), *t.get_unchecked(g + 4), *t.get_unchecked(g + 8),
+            *t.get_unchecked(g + 12), p, p2, ic, ics, e == 0, t1c, t1s, t2c, t2s, t3c, t3s,
+        );
+        *t.get_unchecked_mut(g) = y0;
+        *t.get_unchecked_mut(g + 4) = y1;
+        *t.get_unchecked_mut(g + 8) = y2;
+        *t.get_unchecked_mut(g + 12) = y3;
+    }
+}
+
+#[inline(always)]
+unsafe fn dif_l1(t: &mut [u64; 16], ic: u32, ics: u32, p: u64, p2: u64) {
+    for h in 0..4 {
+        let b4 = 4 * h;
+        let (y0, y1, y2, y3) = r4_lazy(
+            *t.get_unchecked(b4), *t.get_unchecked(b4 + 1), *t.get_unchecked(b4 + 2),
+            *t.get_unchecked(b4 + 3), p, p2, ic, ics, true, 0, 0, 0, 0, 0, 0,
+        );
+        *t.get_unchecked_mut(b4) = y0;
+        *t.get_unchecked_mut(b4 + 1) = y1;
+        *t.get_unchecked_mut(b4 + 2) = y2;
+        *t.get_unchecked_mut(b4 + 3) = y3;
+    }
+}
+
+#[inline(always)]
+unsafe fn dit_l1(t: &mut [u64; 16], jc: u32, jcs: u32, p: u64, p2: u64) {
+    for h in 0..4 {
+        let b4 = 4 * h;
+        let (o0, o1, o2, o3) = r4_lazy_dit(
+            *t.get_unchecked(b4), *t.get_unchecked(b4 + 1), *t.get_unchecked(b4 + 2),
+            *t.get_unchecked(b4 + 3), p, p2, jc, jcs, true, 0, 0, 0, 0, 0, 0,
+        );
+        *t.get_unchecked_mut(b4) = o0;
+        *t.get_unchecked_mut(b4 + 1) = o1;
+        *t.get_unchecked_mut(b4 + 2) = o2;
+        *t.get_unchecked_mut(b4 + 3) = o3;
+    }
+}
+
+#[inline(always)]
+unsafe fn dit_l4(t: &mut [u64; 16], iw: &[u32; N], iws: &[u32; N], jc: u32, jcs: u32, p: u64, p2: u64) {
+    for g in 0..4 {
+        let e = 64 * g;
+        let (it1c, it1s, it2c, it2s, it3c, it3s) = twiddles3(iw, iws, e);
+        let (o0, o1, o2, o3) = r4_lazy_dit(
+            *t.get_unchecked(g), *t.get_unchecked(g + 4), *t.get_unchecked(g + 8),
+            *t.get_unchecked(g + 12), p, p2, jc, jcs, e == 0, it1c, it1s, it2c, it2s, it3c, it3s,
+        );
+        *t.get_unchecked_mut(g) = o0;
+        *t.get_unchecked_mut(g + 4) = o1;
+        *t.get_unchecked_mut(g + 8) = o2;
+        *t.get_unchecked_mut(g + 12) = o3;
+    }
+}
+
+/// Fused transform boundary on contiguous 16-element blocks: `xa`,`xb` hold the two
+/// operands after the middle forward stages; per block this completes the forward
+/// (last two DIF stages) for each, does the Montgomery pointwise product, and starts
+/// the inverse (first two DIT stages) — entirely in registers, so the full forward
+/// spectra never touch memory.
+#[inline(always)]
+fn boundary(xa: &[u64; N], xb: &[u64; N], out: &mut [u64; N], t: &PrimeTables) {
+    let p = t.p;
+    let p2 = p << 1;
+    let (icf, icfs) = (t.w[N / 4], t.ws[N / 4]); // forward 4th root I
+    let (jc, jcs) = (t.iw[N / 4], t.iws[N / 4]); // inverse 4th root J
+    let pinv = t.pinv;
+    let mut i = 0;
+    while i < N {
+        let mut ta = [0u64; 16];
+        let mut tb = [0u64; 16];
+        unsafe {
+            for k in 0..16 {
+                *ta.get_unchecked_mut(k) = *xa.get_unchecked(i + k);
+                *tb.get_unchecked_mut(k) = *xb.get_unchecked(i + k);
+            }
+            dif_l4(&mut ta, &t.w, &t.ws, icf, icfs, p, p2);
+            dif_l1(&mut ta, icf, icfs, p, p2);
+            dif_l4(&mut tb, &t.w, &t.ws, icf, icfs, p, p2);
+            dif_l1(&mut tb, icf, icfs, p, p2);
+            let mut tc = [0u64; 16];
+            for k in 0..16 {
+                *tc.get_unchecked_mut(k) = mont_mul(*ta.get_unchecked(k), *tb.get_unchecked(k), p, pinv);
+            }
+            dit_l1(&mut tc, jc, jcs, p, p2);
+            dit_l4(&mut tc, &t.iw, &t.iws, jc, jcs, p, p2);
+            for k in 0..16 {
+                *out.get_unchecked_mut(i + k) = *tc.get_unchecked(k);
+            }
+        }
+        i += 16;
+    }
 }
 
 fn convolve_mod(t: &PrimeTables, a: &[u32; N], b: &[u32; N]) -> [u64; N] {
-    // The spectral pointwise product (Montgomery, since the domain is in Montgomery
-    // form) is folded into the inverse transform's first stage, so there is no
-    // standalone pointwise pass here.
-    let (fa, fb) = fwd2(a, b, t);
-    inv(fa, &fb, t)
+    let (xa, xb) = fwd2(a, b, t); // forward through the middle stages
+    let mut x = [0u64; N];
+    boundary(&xa, &xb, &mut x, t); // last fwd stages + pointwise + first inv stages, fused
+    dit4_rest(&mut x, &t.iw, &t.iws, t.iw[N / 4], t.iws[N / 4], &t.ipsi, &t.ipsis, t.p); // rest of inverse
+    x
 }
 
 /// Create a plan (precomputes NTT tables — free under the metric).
