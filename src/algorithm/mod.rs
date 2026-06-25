@@ -210,6 +210,18 @@ impl L {
     unsafe fn lane1(self) -> u64 {
         u64x2_extract_lane::<1>(self.0)
     }
+    /// Load two adjacent u64 (positions p[0], p[1]) into lanes 0,1.
+    #[inline]
+    #[target_feature(enable = "simd128")]
+    unsafe fn load(p: *const u64) -> L {
+        L(v128_load(p as *const v128))
+    }
+    /// Store lanes 0,1 into two adjacent u64 (p[0], p[1]).
+    #[inline]
+    #[target_feature(enable = "simd128")]
+    unsafe fn store(p: *mut u64, v: L) {
+        v128_store(p as *mut v128, v.0);
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -264,6 +276,17 @@ impl L {
     unsafe fn lane1(self) -> u64 {
         self.1
     }
+    /// Load two adjacent u64 (positions p[0], p[1]) into lanes 0,1.
+    #[inline(always)]
+    unsafe fn load(p: *const u64) -> L {
+        L(*p, *p.add(1))
+    }
+    /// Store lanes 0,1 into two adjacent u64 (p[0], p[1]).
+    #[inline(always)]
+    unsafe fn store(p: *mut u64, v: L) {
+        *p = v.0;
+        *p.add(1) = v.1;
+    }
 }
 
 /// Lanewise reduce [0,4p) -> [0,2p).
@@ -282,6 +305,63 @@ unsafe fn shoup_lazy_l(x: L, c: u32, cs: u32, pv: L) -> L {
     let csv = L::splat(cs as u64);
     let q = x.mul(csv).shr32();
     x.mul(cv).sub(q.mul(pv))
+}
+
+/// Lazy Shoup with the multiplier already in vector form (different constant per
+/// lane). Result in [0,2p). `pv = splat(p)`.
+#[inline(always)]
+unsafe fn shoup_lazy_lv(x: L, cv: L, csv: L, pv: L) -> L {
+    let q = x.mul(csv).shr32();
+    x.mul(cv).sub(q.mul(pv))
+}
+
+/// Lanewise reduce [0,2p) -> [0,p).
+#[inline(always)]
+unsafe fn redp_l(a: L, pv: L) -> L {
+    let t = a.sub(pv);
+    let m = a.ge(pv);
+    L::select(m, t, a)
+}
+
+/// Build the three radix-4 stage twiddle vectors (and their Shoup constants) for a
+/// pair of adjacent butterflies with exponents `e0` and `e1`. Each returned `L`
+/// holds the constant for lane 0 (e0) and lane 1 (e1).
+#[inline(always)]
+unsafe fn twiddles3_l(
+    w: &[u32; N], ws: &[u32; N], e0: usize, e1: usize,
+) -> (L, L, L, L, L, L) {
+    let g = |t: &[u32; N], a: usize, b: usize| {
+        L::new(*t.get_unchecked(a) as u64, *t.get_unchecked(b) as u64)
+    };
+    (
+        g(w, e0, e1), g(ws, e0, e1),
+        g(w, 2 * e0, 2 * e1), g(ws, 2 * e0, 2 * e1),
+        g(w, 3 * e0, 3 * e1), g(ws, 3 * e0, 3 * e1),
+    )
+}
+
+/// Vectorized inverse radix-4 DIT butterfly (two adjacent butterflies in the two
+/// lanes), Harvey-lazy: inputs/outputs in [0,4p). Per-lane stage twiddles; the
+/// inverse 4th-root `J` (`jcv`,`jcsv`) is the same for both lanes (splat). The
+/// untwiddled input `a` is reduced; the twiddled inputs go through the lazy Shoup
+/// which tolerates [0,4p). No trivial branch — the e=0 column carries the real
+/// w^0=1 twiddle (its Shoup const reduces correctly), so both lanes use one path.
+#[allow(clippy::too_many_arguments)]
+#[inline(always)]
+unsafe fn r4_lazy_dit_l(
+    a: L, b: L, c: L, d: L, pv: L, p2v: L, jcv: L, jcsv: L,
+    t1c: L, t1s: L, t2c: L, t2s: L, t3c: L, t3s: L,
+) -> (L, L, L, L) {
+    let a = red2p_l(a, p2v); // [0,4p) -> [0,2p)
+    let b = shoup_lazy_lv(b, t1c, t1s, pv);
+    let c = shoup_lazy_lv(c, t2c, t2s, pv);
+    let d = shoup_lazy_lv(d, t3c, t3s, pv);
+    let s0 = red2p_l(a.add(c), p2v);
+    let s1 = red2p_l(a.add(p2v).sub(c), p2v);
+    let s2 = red2p_l(b.add(d), p2v);
+    let s3 = b.add(p2v).sub(d); // [0,4p); feeds only the lazy Shoup
+    let js3 = shoup_lazy_lv(s3, jcv, jcsv, pv);
+    (s0.add(s2), s1.add(js3), s0.add(p2v).sub(s2), s1.add(p2v).sub(js3))
 }
 
 fn build_tables(p: u64) -> PrimeTables {
@@ -557,64 +637,69 @@ unsafe fn dit_l4(t: &mut [u64; 16], iw: &[u32; N], iws: &[u32; N], jc: u32, jcs:
 /// Remaining inverse DIT stages (the first two are done by `boundary`): the middle
 /// strided stages (half-blocks 16, 64) then the final stage (half-block 256) with the
 /// psi^{-1}*N^{-1} post-weight folded into the output store. Values in [0,4p).
+/// Vectorized: butterflies `j` and `j+1` ride the two lanes. Their per-slot memory
+/// positions are adjacent (`x[base]`, `x[base+1]`), so each radix-4 input/output is a
+/// contiguous v128 load/store; the two lanes' twiddles differ and are loaded as pairs.
 #[allow(clippy::too_many_arguments)]
-#[inline(always)]
-fn dit4_rest(
+#[cfg_attr(target_arch = "wasm32", target_feature(enable = "simd128"))]
+unsafe fn dit4_rest(
     x: &mut [u64; N], iw: &[u32; N], iws: &[u32; N], jc: u32, jcs: u32,
     ipsi: &[u32; N], ipsis: &[u32; N], p: u64,
 ) {
+    let pv = L::splat(p);
+    let p2v = L::splat(p << 1);
+    let jcv = L::splat(jc as u64);
+    let jcsv = L::splat(jcs as u64);
+    let xp = x.as_mut_ptr();
     let mut len = 16;
     while len < N / 4 {
         let step = N / (4 * len);
-        let p2 = p << 1;
         let mut i = 0;
         while i < N {
-            let mut e = 0usize;
             let mut j = 0;
             while j < len {
-                unsafe {
-                    let (t1c, t1s, t2c, t2s, t3c, t3s) = twiddles3(iw, iws, e);
-                    let (o0, o1, o2, o3) = r4_lazy_dit(
-                        *x.get_unchecked(i + j),
-                        *x.get_unchecked(i + j + len),
-                        *x.get_unchecked(i + j + 2 * len),
-                        *x.get_unchecked(i + j + 3 * len),
-                        p, p2, jc, jcs, e == 0, t1c, t1s, t2c, t2s, t3c, t3s,
-                    );
-                    *x.get_unchecked_mut(i + j) = o0;
-                    *x.get_unchecked_mut(i + j + len) = o1;
-                    *x.get_unchecked_mut(i + j + 2 * len) = o2;
-                    *x.get_unchecked_mut(i + j + 3 * len) = o3;
-                }
-                e += step;
-                j += 1;
+                let e0 = j * step;
+                let e1 = e0 + step;
+                let (t1c, t1s, t2c, t2s, t3c, t3s) = twiddles3_l(iw, iws, e0, e1);
+                let base = i + j;
+                let a = L::load(xp.add(base));
+                let b = L::load(xp.add(base + len));
+                let c = L::load(xp.add(base + 2 * len));
+                let d = L::load(xp.add(base + 3 * len));
+                let (o0, o1, o2, o3) =
+                    r4_lazy_dit_l(a, b, c, d, pv, p2v, jcv, jcsv, t1c, t1s, t2c, t2s, t3c, t3s);
+                L::store(xp.add(base), o0);
+                L::store(xp.add(base + len), o1);
+                L::store(xp.add(base + 2 * len), o2);
+                L::store(xp.add(base + 3 * len), o3);
+                j += 2;
             }
             i += 4 * len;
         }
         len <<= 2;
     }
-    // Final stage (half-block 256) with the psi^{-1}*N^{-1} post-weight folded into
-    // the output store, so there is no standalone post-weight pass.
-    let p2 = p << 1;
+    // Final stage (half-block 256, step=1, e=j) with the psi^{-1}*N^{-1} post-weight
+    // folded into the output store (no standalone post-weight pass).
     let mut j = 0usize;
     while j < N / 4 {
-        unsafe {
-            let e = j; // step = 1 at the last stage
-            let (it1c, it1s, it2c, it2s, it3c, it3s) = twiddles3(iw, iws, e);
-            let (o0, o1, o2, o3) = r4_lazy_dit(
-                *x.get_unchecked(j),
-                *x.get_unchecked(j + N / 4),
-                *x.get_unchecked(j + N / 2),
-                *x.get_unchecked(j + 3 * N / 4),
-                p, p2, jc, jcs, e == 0, it1c, it1s, it2c, it2s, it3c, it3s,
-            );
-            let pw = |o: u64, pos: usize| shoup(o, *ipsi.get_unchecked(pos), *ipsis.get_unchecked(pos), p);
-            *x.get_unchecked_mut(j) = pw(o0, j);
-            *x.get_unchecked_mut(j + N / 4) = pw(o1, j + N / 4);
-            *x.get_unchecked_mut(j + N / 2) = pw(o2, j + N / 2);
-            *x.get_unchecked_mut(j + 3 * N / 4) = pw(o3, j + 3 * N / 4);
-        }
-        j += 1;
+        let (t1c, t1s, t2c, t2s, t3c, t3s) = twiddles3_l(iw, iws, j, j + 1);
+        let a = L::load(xp.add(j));
+        let b = L::load(xp.add(j + N / 4));
+        let c = L::load(xp.add(j + N / 2));
+        let d = L::load(xp.add(j + 3 * N / 4));
+        let (o0, o1, o2, o3) =
+            r4_lazy_dit_l(a, b, c, d, pv, p2v, jcv, jcsv, t1c, t1s, t2c, t2s, t3c, t3s);
+        // Post-weight (shoup with conditional subtract -> [0,p)) per lane position.
+        let pw = |o: L, pos: usize| -> L {
+            let ipv = L::new(*ipsi.get_unchecked(pos) as u64, *ipsi.get_unchecked(pos + 1) as u64);
+            let ipsv = L::new(*ipsis.get_unchecked(pos) as u64, *ipsis.get_unchecked(pos + 1) as u64);
+            redp_l(shoup_lazy_lv(o, ipv, ipsv, pv), pv)
+        };
+        L::store(xp.add(j), pw(o0, j));
+        L::store(xp.add(j + N / 4), pw(o1, j + N / 4));
+        L::store(xp.add(j + N / 2), pw(o2, j + N / 2));
+        L::store(xp.add(j + 3 * N / 4), pw(o3, j + 3 * N / 4));
+        j += 2;
     }
 }
 
@@ -659,8 +744,8 @@ fn convolve_mod(t: &PrimeTables, a: &[u32; N], b: &[u32; N]) -> [u64; N] {
     let mut x = [0u64; N];
     unsafe {
         fwd_boundary(t, a, b, &mut x); // forward (SIMD a/b) + pointwise + first inv stages
+        dit4_rest(&mut x, &t.iw, &t.iws, t.iw[N / 4], t.iws[N / 4], &t.ipsi, &t.ipsis, t.p); // rest of inverse (SIMD)
     }
-    dit4_rest(&mut x, &t.iw, &t.iws, t.iw[N / 4], t.iws[N / 4], &t.ipsi, &t.ipsis, t.p); // rest of inverse
     x
 }
 
