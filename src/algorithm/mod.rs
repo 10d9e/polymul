@@ -106,18 +106,6 @@ fn shoup_const(c: u64, p: u64) -> u32 {
     (((c as u128) << 32) / p as u128) as u32
 }
 
-/// Division-free `x * c mod p`, where `cs = floor(c<<32 / p)` and `0 <= x,c < p < 2^31`.
-#[inline(always)]
-fn shoup(x: u64, c: u32, cs: u32, p: u64) -> u64 {
-    let q = x.wrapping_mul(cs as u64) >> 32;
-    let r = x.wrapping_mul(c as u64).wrapping_sub(q.wrapping_mul(p));
-    if r >= p {
-        r - p
-    } else {
-        r
-    }
-}
-
 /// Reduce a value in [0, 4p) into [0, 2p).
 #[inline(always)]
 fn red2p(a: u64, p: u64) -> u64 {
@@ -779,45 +767,58 @@ pub fn plan_new() -> Plan {
     }
 }
 
+/// Garner CRT reconstruction, vectorized two coefficients (j, j+1) at a time. The
+/// mixing constants are identical for both lanes (splat); the per-prime residues are
+/// adjacent in memory so each `r*[j..j+2]` is a contiguous v128 load. Every modular
+/// multiply is a lane Shoup (reduced to [0,p) with a conditional subtract).
+#[cfg_attr(target_arch = "wasm32", target_feature(enable = "simd128"))]
+unsafe fn crt_combine(r0: &[u64; N], r1: &[u64; N], r2: &[u64; N], plan: &Plan, res: &mut [u32; N]) {
+    let p1v = L::splat(P1);
+    let p2v = L::splat(P2);
+    let p2_3v = L::splat(3 * P2);
+    let inv01_v = L::splat(plan.inv_p0_mod_p1 as u64);
+    let inv01_s_v = L::splat(plan.inv_p0_mod_p1_s as u64);
+    let p0m2_v = L::splat(plan.p0_mod_p2 as u64);
+    let p0m2_s_v = L::splat(plan.p0_mod_p2_s as u64);
+    let invm01_v = L::splat(plan.inv_m01_mod_p2 as u64);
+    let invm01_s_v = L::splat(plan.inv_m01_mod_p2_s as u64);
+    let p2_half_v = L::splat(plan.p2_half);
+    let p0_lo_v = L::splat(plan.p0_lo as u64);
+    let m01_lo_v = L::splat(plan.m01_lo as u64);
+    let p_lo_v = L::splat(plan.p_lo as u64);
+    let r0p = r0.as_ptr();
+    let r1p = r1.as_ptr();
+    let r2p = r2.as_ptr();
+    let mut j = 0;
+    while j < N {
+        let v0 = L::load(r0p.add(j)); // < P0 < P1
+        // v1 = (r1 - v0) * inv(P0) mod P1.
+        let t1 = L::load(r1p.add(j)).add(p1v).sub(v0); // [0, 2*P1)
+        let v1 = redp_l(shoup_lazy_lv(t1, inv01_v, inv01_s_v, p1v), p1v);
+        // w = (v0 + P0*v1) mod P2 kept lazy in [0, 3*P2); v2 = (r2 - w) * inv(P0*P1).
+        let term = redp_l(shoup_lazy_lv(v1, p0m2_v, p0m2_s_v, p2v), p2v);
+        let w = v0.add(term); // < P0 + P2 < 3*P2
+        let t2 = L::load(r2p.add(j)).add(p2_3v).sub(w); // (0, 4*P2)
+        let v2 = redp_l(shoup_lazy_lv(t2, invm01_v, invm01_s_v, p2v), p2v);
+        // u = v0 + P0*v1 + P0*P1*v2 ; low 32 bits = product mod 2^32, sign from v2.
+        let lo = v0.add(p0_lo_v.mul(v1)).add(m01_lo_v.mul(v2));
+        let m = v2.ge(p2_half_v);
+        let out = L::select(m, lo.sub(p_lo_v), lo);
+        *res.get_unchecked_mut(j) = out.lane0() as u32;
+        *res.get_unchecked_mut(j + 1) = out.lane1() as u32;
+        j += 2;
+    }
+}
+
 /// Negacyclic polynomial multiplication: a(X) * b(X) mod (X^1024+1).
 pub fn poly_mul(plan: &mut Plan, a: &[u32; 1024], b: &[u32; 1024]) -> [u32; 1024] {
     let r0 = convolve_mod(&plan.t[0], a, b);
     let r1 = convolve_mod(&plan.t[1], a, b);
     let r2 = convolve_mod(&plan.t[2], a, b);
 
-    let p1 = P1;
-    let p2 = P2;
-    let inv01 = plan.inv_p0_mod_p1;
-    let inv01_s = plan.inv_p0_mod_p1_s;
-    let p0_mod_p2 = plan.p0_mod_p2;
-    let p0_mod_p2_s = plan.p0_mod_p2_s;
-    let inv_m01 = plan.inv_m01_mod_p2;
-    let inv_m01_s = plan.inv_m01_mod_p2_s;
-    let p2_half = plan.p2_half;
-    let p0_lo = plan.p0_lo;
-    let m01_lo = plan.m01_lo;
-    let p_lo = plan.p_lo;
-
     let mut res = [0u32; N];
     unsafe {
-        for j in 0..N {
-            let v0 = *r0.get_unchecked(j); // < P0 < P1
-            // v1 = (r1 - v0) * inv(P0) mod P1. Shoup tolerates any input < 2^32, so
-            // t1 (< 2*P1) and v1 (< P1, used mod P2) need no pre-reduction.
-            let t1 = *r1.get_unchecked(j) + p1 - v0; // [0, 2*P1)
-            let v1 = shoup(t1, inv01, inv01_s, p1);
-            // w = (v0 + P0*v1) mod P2 kept lazy in [0, 3*P2); v2 = (r2 - w) * inv(P0*P1).
-            let term = shoup(v1, p0_mod_p2, p0_mod_p2_s, p2); // (P0 mod P2)*v1 mod P2
-            let w = v0 + term; // < P0 + P2 < 3*P2
-            let t2 = *r2.get_unchecked(j) + 3 * p2 - w; // (0, 4*P2)
-            let v2 = shoup(t2, inv_m01, inv_m01_s, p2);
-
-            // u = v0 + P0*v1 + P0*P1*v2 ; need u mod 2^32 and sign of (u - P/2).
-            let lo = (v0 as u32)
-                .wrapping_add(p0_lo.wrapping_mul(v1 as u32))
-                .wrapping_add(m01_lo.wrapping_mul(v2 as u32));
-            *res.get_unchecked_mut(j) = if v2 >= p2_half { lo.wrapping_sub(p_lo) } else { lo };
-        }
+        crt_combine(&r0, &r1, &r2, plan, &mut res);
     }
     res
 }
