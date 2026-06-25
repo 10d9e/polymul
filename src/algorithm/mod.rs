@@ -660,23 +660,36 @@ fn plantard_s(x: u64, bp: u64, p: u64) -> u64 {
 /// next sub-stage (`dit_l4_v`), whose `a` reduction and Plantards both tolerate [0,8p),
 /// so no per-input reductions are needed here.
 #[inline(always)]
-unsafe fn dit_l1_in2p(t: &mut [u64; 16], jcp: u64, p: u64, p2: u64) {
-    let p4 = p2 << 1;
-    for h in 0..4 {
-        let b4 = 4 * h;
-        let a = *t.get_unchecked(b4);
-        let b = *t.get_unchecked(b4 + 1);
-        let c = *t.get_unchecked(b4 + 2);
-        let d = *t.get_unchecked(b4 + 3);
-        let s0 = a + c; // [0,4p)
-        let s1 = a + p2 - c; // [0,4p)
-        let s2 = b + d; // [0,4p)
-        let s3 = b + p2 - d; // [0,4p)
-        let js3 = plantard_s(s3, jcp, p);
-        *t.get_unchecked_mut(b4) = s0 + s2; // [0,8p)
-        *t.get_unchecked_mut(b4 + 1) = s1 + js3; // [0,6p)
-        *t.get_unchecked_mut(b4 + 2) = s0 + p4 - s2; // (0,8p)
-        *t.get_unchecked_mut(b4 + 3) = s1 + p2 - js3; // (0,6p)
+unsafe fn dit_l1_in2p(t: &mut [u64; 16], jcpv: L, pv: L, p2v: L, p4v: L, cav: L) {
+    let tp = t.as_mut_ptr();
+    // Pair butterflies (h, h+1) in the two lanes. Their legs are 4 apart, so inputs are
+    // gathered and outputs scattered, but the radix-4 arithmetic and the J Plantard run
+    // once per pair instead of twice.
+    let mut h = 0;
+    while h < 4 {
+        let (b0, b1) = (4 * h, 4 * (h + 1));
+        let a = L::new(*tp.add(b0), *tp.add(b1));
+        let b = L::new(*tp.add(b0 + 1), *tp.add(b1 + 1));
+        let c = L::new(*tp.add(b0 + 2), *tp.add(b1 + 2));
+        let d = L::new(*tp.add(b0 + 3), *tp.add(b1 + 3));
+        let s0 = a.add(c); // [0,4p)
+        let s1 = a.add(p2v).sub(c); // [0,4p)
+        let s2 = b.add(d); // [0,4p)
+        let s3 = b.add(p2v).sub(d); // [0,4p)
+        let js3 = plantard_lv(s3, jcpv, pv, cav);
+        let o0 = s0.add(s2);
+        let o1 = s1.add(js3);
+        let o2 = s0.add(p4v).sub(s2);
+        let o3 = s1.add(p2v).sub(js3);
+        *tp.add(b0) = o0.lane0();
+        *tp.add(b1) = o0.lane1();
+        *tp.add(b0 + 1) = o1.lane0();
+        *tp.add(b1 + 1) = o1.lane1();
+        *tp.add(b0 + 2) = o2.lane0();
+        *tp.add(b1 + 2) = o2.lane1();
+        *tp.add(b0 + 3) = o3.lane0();
+        *tp.add(b1 + 3) = o3.lane1();
+        h += 2;
     }
 }
 
@@ -818,7 +831,7 @@ unsafe fn boundary_simd(xab: &[L; N], out: &mut [u64; N], t: &PrimeTables) {
             L::store(tcp.add(k), mont_mul_l(av, bv, pv, pinvv, maskv));
             k += 2;
         }
-        dit_l1_in2p(&mut tc, jcp, p, p2);
+        dit_l1_in2p(&mut tc, jcpv, pv, p2v, L::splat(p << 2), cav);
         dit_l4_v(&mut tc, &t.iwp, cav, jcpv, pv, p2v);
         for k in 0..16 {
             *out.get_unchecked_mut(i + k) = *tc.get_unchecked(k);
