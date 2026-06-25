@@ -3,7 +3,7 @@
 Leaderboard of recorded submissions. Full narratives live in
 [`history/entries/`](history/entries/).
 
-**Current record: 8779216** (@10d9e, entry 0058)
+**Current record: 8771024** (@10d9e, entry 0059)
 
 | # | date | author | SCORE | Δ vs record | commit | entry | note |
 |---|------|--------|-------|-------------|--------|-------|------|
@@ -65,3 +65,4 @@ Leaderboard of recorded submissions. Full narratives live in
 | 0056 | 2026-06-25 | @10d9e | 9014640 | -49152 (new record) | `a350dbf` | [0056](history/entries/0056--10d9e.md) | Skip the post-weight reduction for the P1/P2 residues in the fused CRT Only the … |
 | 0057 | 2026-06-25 | @10d9e | 8957488 | -57152 (new record) | `3ba9e57` | [0057](history/entries/0057--10d9e.md) | Pack the (a,b) input operands into lane pairs once, shared by all three primes T… |
 | 0058 | 2026-06-25 | @10d9e | 8779216 | -178272 (new record) | `74b1860` | [0058](history/entries/0058--10d9e.md) | Vectorize the first inverse sub-stage (dit_l1_in2p) This scalar radix-4 sub-stag… |
+| 0059 | 2026-06-25 | @10d9e | 8771024 | -8192 (new record) | `77c9f8c` | [0059](history/entries/0059--10d9e.md) | Narrow the fused-CRT result store to one SIMD op; drop dead scalar helpers final… |
