@@ -62,6 +62,11 @@ struct PrimeTables {
     ipsip: [u64; N], // Plantard const for psi^{-j} * N^{-1} * R^{-1} (post-weight)
     wp: [u64; N],    // Plantard const for w^e   (forward twiddle, w = psi^2)
     iwp: [u64; N],   // Plantard const for w^{-e} (inverse twiddle)
+    // iwp at strides 2 and 3, so the inverse final stage (step=1) loads the t2/t3
+    // twiddles of an adjacent butterfly pair (j, j+1) with a single contiguous v128
+    // load instead of two scattered scalar loads.
+    iwp2: [u64; N / 2], // iwp2[j] = iwp[2j]
+    iwp3: [u64; N / 2], // iwp3[j] = iwp[3j]  (note 3j < N for j < N/3; only j<N/4 used)
     pinv: u32,       // -p^{-1} mod 2^32, for the Montgomery pointwise product
 }
 
@@ -116,8 +121,9 @@ fn red2p(a: u64, p: u64) -> u64 {
 #[inline(always)]
 unsafe fn mont_mul_l(a: L, b: L, pv: L, pinvv: L, maskv: L) -> L {
     let t = a.mul(b); // low 64 of a*b (exact, < p*R)
-    let tlo = t.and(maskv); // t mod R
-    let m = tlo.mul(pinvv).and(maskv); // (t mod R) * (-p^{-1}) mod R
+    // m = (t mod R) * (-p^{-1}) mod R. Masking t to R first is unnecessary: the low 32
+    // bits of t*pinv already equal ((t mod R)*pinv) mod R, so one `and` is enough.
+    let m = t.mul(pinvv).and(maskv);
     t.add(m.mul(pv)).shr32() // exact /R, result in [0,2p)
 }
 
@@ -410,6 +416,8 @@ fn build_tables(p: u64) -> PrimeTables {
         ipsip: [0; N],
         wp: [0; N],
         iwp: [0; N],
+        iwp2: [0; N / 2],
+        iwp3: [0; N / 2],
         pinv: inv.wrapping_neg(),
     };
 
@@ -432,6 +440,10 @@ fn build_tables(p: u64) -> PrimeTables {
         pt.iwp[e] = plantard_const(iwacc, p);
         wacc = (wacc as u128 * w_root as u128 % p as u128) as u64;
         iwacc = (iwacc as u128 * w_inv as u128 % p as u128) as u64;
+    }
+    for j in 0..N / 2 {
+        pt.iwp2[j] = pt.iwp[(2 * j) % N];
+        pt.iwp3[j] = pt.iwp[(3 * j) % N];
     }
     pt
 }
@@ -676,7 +688,7 @@ unsafe fn dit_l4_v(t: &mut [u64; 16], iwp: &[u64; N], cav: L, jcpv: L, pv: L, p2
 #[allow(clippy::too_many_arguments)]
 #[cfg_attr(target_arch = "wasm32", target_feature(enable = "simd128"))]
 unsafe fn dit4_rest(
-    x: &mut [u64; N], iwp: &[u64; N], jcp: u64,
+    x: &mut [u64; N], iwp: &[u64; N], iwp2: &[u64; N / 2], iwp3: &[u64; N / 2], jcp: u64,
     ipsip: &[u64; N], p: u64,
 ) {
     let pv = L::splat(p);
@@ -718,8 +730,14 @@ unsafe fn dit4_rest(
     // Final stage (half-block 256, step=1, e=j) with the psi^{-1}*N^{-1} post-weight
     // folded into the output store (no standalone post-weight pass).
     let mut j = 0usize;
+    let iwp2p = iwp2.as_ptr();
+    let iwp3p = iwp3.as_ptr();
+    let ipsipp = ipsip.as_ptr();
     while j < N / 4 {
-        let (t1p, t2p, t3p) = twiddles3_l(iwp, j, j + 1);
+        // step=1, so the pair (j, j+1) has adjacent twiddle exponents: t1 is iwp[j..],
+        // t2 is iwp2[j..] = iwp[2j],iwp[2j+2], t3 is iwp3[j..] = iwp[3j],iwp[3j+3] — each
+        // a single contiguous v128 load instead of two scattered scalar loads.
+        let (t1p, t2p, t3p) = (L::load(iwp.as_ptr().add(j)), L::load(iwp2p.add(j)), L::load(iwp3p.add(j)));
         let a = L::load(xp.add(j));
         let b = L::load(xp.add(j + N / 4));
         let c = L::load(xp.add(j + N / 2));
@@ -727,9 +745,9 @@ unsafe fn dit4_rest(
         let (o0, o1, o2, o3) =
             r4_lazy_dit_l_final(a, b, c, d, pv, p2v, p4v, cav, jcpv, t1p, t2p, t3p);
         // Post-weight (Plantard with conditional subtract -> [0,p)) per lane position.
+        // The pair (pos, pos+1) is adjacent in ipsip, so a single contiguous load.
         let pw = |o: L, pos: usize| -> L {
-            let ipv = L::new(*ipsip.get_unchecked(pos), *ipsip.get_unchecked(pos + 1));
-            redp_l(plantard_lv(o, ipv, pv, cav), pv)
+            redp_l(plantard_lv(o, L::load(ipsipp.add(pos)), pv, cav), pv)
         };
         L::store(xp.add(j), pw(o0, j));
         L::store(xp.add(j + N / 4), pw(o1, j + N / 4));
@@ -788,7 +806,7 @@ fn convolve_mod(t: &PrimeTables, a: &[u32; N], b: &[u32; N]) -> [u64; N] {
     let mut x = [0u64; N];
     unsafe {
         fwd_boundary(t, a, b, &mut x); // forward (SIMD a/b) + pointwise + first inv stages
-        dit4_rest(&mut x, &t.iwp, t.iwp[N / 4], &t.ipsip, t.p); // rest of inverse (SIMD)
+        dit4_rest(&mut x, &t.iwp, &t.iwp2, &t.iwp3, t.iwp[N / 4], &t.ipsip, t.p); // rest of inverse (SIMD)
     }
     x
 }
@@ -846,9 +864,10 @@ unsafe fn crt_combine(r0: &[u64; N], r1: &[u64; N], r2: &[u64; N], plan: &Plan, 
         // v1 = (r1 - v0) * inv(P0) mod P1.
         let t1 = L::load(r1p.add(j)).add(p1v).sub(v0); // [0, 2*P1)
         let v1 = redp_l(plantard_lv(t1, inv01_v, p1v, cav), p1v);
-        // w = (v0 + P0*v1) mod P2 kept lazy in [0, 3*P2); v2 = (r2 - w) * inv(P0*P1).
-        let term = redp_l(plantard_lv(v1, p0m2_v, p2v, cav), p2v);
-        let w = v0.add(term); // < P0 + P2 < 3*P2
+        // w = (v0 + P0*v1) mod P2 kept lazy; term stays in [0,2*P2) (it only feeds w,
+        // which the 3*P2 bias on t2 absorbs), so its reduction is dropped.
+        let term = plantard_lv(v1, p0m2_v, p2v, cav); // [0, 2*P2)
+        let w = v0.add(term); // < P0 + 2*P2 < 3*P2
         let t2 = L::load(r2p.add(j)).add(p2_3v).sub(w); // (0, 4*P2)
         let v2 = redp_l(plantard_lv(t2, invm01_v, p2v, cav), p2v);
         // u = v0 + P0*v1 + P0*P1*v2 ; low 32 bits = product mod 2^32, sign from v2.
