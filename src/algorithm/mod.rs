@@ -370,6 +370,30 @@ unsafe fn r4_lazy_dit_l(
     (s0.add(s2), s1.add(js3), s0.add(p2v).sub(s2), s1.add(p2v).sub(js3))
 }
 
+/// Final inverse DIT butterfly: identical to `r4_lazy_dit_l` but the s0/s1/s2
+/// reductions are dropped. The outputs feed only the psi^{-1}*N^{-1} post-weight
+/// Shoup, which tolerates any value < 2^32, so they may grow to [0,8p) (well under
+/// 2^32 at the 27-bit primes). The untwiddled input `a` is still reduced so the
+/// sums stay bounded.
+#[allow(clippy::too_many_arguments)]
+#[inline(always)]
+unsafe fn r4_lazy_dit_l_final(
+    a: L, b: L, c: L, d: L, pv: L, p2v: L, p4v: L, jcv: L, jcsv: L,
+    t1c: L, t1s: L, t2c: L, t2s: L, t3c: L, t3s: L,
+) -> (L, L, L, L) {
+    let a = red2p_l(a, p2v); // [0,4p) -> [0,2p)
+    let b = shoup_lazy_lv(b, t1c, t1s, pv);
+    let c = shoup_lazy_lv(c, t2c, t2s, pv);
+    let d = shoup_lazy_lv(d, t3c, t3s, pv);
+    let s0 = a.add(c); // [0,4p)
+    let s1 = a.add(p2v).sub(c); // [0,4p)
+    let s2 = b.add(d); // [0,4p)
+    let s3 = b.add(p2v).sub(d); // [0,4p)
+    let js3 = shoup_lazy_lv(s3, jcv, jcsv, pv);
+    // out2 subtracts s2 (< 4p) so it needs a 4p bias; out3 subtracts js3 (< 2p).
+    (s0.add(s2), s1.add(js3), s0.add(p4v).sub(s2), s1.add(p2v).sub(js3))
+}
+
 fn build_tables(p: u64) -> PrimeTables {
     let psi_root = modpow(GEN, (p - 1) / (2 * N as u64), p);
     let w_root = (psi_root as u128 * psi_root as u128 % p as u128) as u64;
@@ -645,6 +669,7 @@ unsafe fn dit4_rest(
 ) {
     let pv = L::splat(p);
     let p2v = L::splat(p << 1);
+    let p4v = L::splat(p << 2);
     let jcv = L::splat(jc);
     let jcsv = L::splat(jcs);
     let xp = x.as_mut_ptr();
@@ -685,7 +710,7 @@ unsafe fn dit4_rest(
         let c = L::load(xp.add(j + N / 2));
         let d = L::load(xp.add(j + 3 * N / 4));
         let (o0, o1, o2, o3) =
-            r4_lazy_dit_l(a, b, c, d, pv, p2v, jcv, jcsv, t1c, t1s, t2c, t2s, t3c, t3s);
+            r4_lazy_dit_l_final(a, b, c, d, pv, p2v, p4v, jcv, jcsv, t1c, t1s, t2c, t2s, t3c, t3s);
         // Post-weight (shoup with conditional subtract -> [0,p)) per lane position.
         let pw = |o: L, pos: usize| -> L {
             let ipv = L::new(*ipsi.get_unchecked(pos), *ipsi.get_unchecked(pos + 1));
