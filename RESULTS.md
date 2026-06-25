@@ -3,7 +3,7 @@
 Leaderboard of recorded submissions. Full narratives live in
 [`history/entries/`](history/entries/).
 
-**Current record: 11519216** (@10d9e, entry 0048)
+**Current record: 11031632** (@10d9e, entry 0049)
 
 | # | date | author | SCORE | Δ vs record | commit | entry | note |
 |---|------|--------|-------|-------------|--------|-------|------|
@@ -55,3 +55,4 @@ Leaderboard of recorded submissions. Full narratives live in
 | 0046 | 2026-06-25 | @10d9e | 11808080 | -331872 (new record) | `3311f46` | [0046](history/entries/0046--10d9e.md) | Mirror the forward u64-table change on the inverse. The inverse pairs adjacent b… |
 | 0047 | 2026-06-25 | @10d9e | 11574416 | -233664 (new record) | `d036a69` | [0047](history/entries/0047--10d9e.md) | Smaller 27-bit primes unlock lazy reduction removal in the forward NTT Replace t… |
 | 0048 | 2026-06-25 | @10d9e | 11519216 | -55200 (new record) | `fbf3261` | [0048](history/entries/0048--10d9e.md) | Drop internal reductions in the final inverse DIT stage The final inverse DIT st… |
+| 0049 | 2026-06-25 | @10d9e | 11031632 | -487584 (new record) | `5b28709` | [0049](history/entries/0049--10d9e.md) | Hoist stage twiddle loads out of the block loop (butterfly-outer iteration) In b… |
