@@ -543,22 +543,23 @@ unsafe fn r4_lazy_l(
 #[allow(clippy::too_many_arguments)]
 #[cfg_attr(target_arch = "wasm32", target_feature(enable = "simd128"))]
 unsafe fn dif4_2_simd(
-    a: &[u32; N], b: &[u32; N], xab: &mut [L; N], psip: &[u64; N],
+    ab: &[L; N], xab: &mut [L; N], psip: &[u64; N],
     wp: &[u64; N], icp: u64, p: u64,
 ) {
     let pv = L::splat(p);
     let p2v = L::splat(p << 1);
     let cav = L::splat((1u64 << 32) + 1);
     let icpv = L::splat(icp);
-    // First stage (half-block N/4) with the psi pre-weight folded into the load.
+    // First stage (half-block N/4) with the psi pre-weight folded into the load. `ab`
+    // holds the (a,b) operands already packed into lane pairs (built once, shared by all
+    // three primes), so each input is a single v128 load.
     let len0 = N / 4;
     let mut j = 0;
     while j < len0 {
         let e = j; // step = 1
         let (t1p, t2p, t3p) = twiddles3_splat(wp, e);
         let pw = |idx: usize| -> L {
-            let v = L::new(*a.get_unchecked(idx) as u64, *b.get_unchecked(idx) as u64);
-            plantard_lv(v, L::splat(*psip.get_unchecked(idx)), pv, cav)
+            plantard_lv(*ab.get_unchecked(idx), L::splat(*psip.get_unchecked(idx)), pv, cav)
         };
         let (y0, y1, y2, y3) = r4_lazy_l(
             pw(j), pw(j + len0), pw(j + 2 * len0), pw(j + 3 * len0), pv, p2v, cav, icpv,
@@ -829,10 +830,10 @@ unsafe fn boundary_simd(xab: &[L; N], out: &mut [u64; N], t: &PrimeTables) {
 /// Forward + pointwise + inverse up to but NOT including the final DIT stage. The final
 /// stage and post-weight are fused into the CRT (`final_crt`), so the per-prime result
 /// array is never materialized. Returns the pre-final inverse state in [0,8p).
-fn convolve_prefinal(t: &PrimeTables, a: &[u32; N], b: &[u32; N]) -> [u64; N] {
+fn convolve_prefinal(t: &PrimeTables, ab: &[L; N]) -> [u64; N] {
     let mut x = [0u64; N];
     unsafe {
-        fwd_boundary(t, a, b, &mut x); // forward (SIMD a/b) + pointwise + first inv stages
+        fwd_boundary(t, ab, &mut x); // forward (SIMD a/b) + pointwise + first inv stages
         dit4_middle(&mut x, &t.iwp, t.iwp[N / 4], t.p); // middle inverse stages (SIMD)
     }
     x
@@ -840,10 +841,21 @@ fn convolve_prefinal(t: &PrimeTables, a: &[u32; N], b: &[u32; N]) -> [u64; N] {
 
 /// Forward transform of both operands (SIMD lockstep) then the fused boundary pass.
 #[cfg_attr(target_arch = "wasm32", target_feature(enable = "simd128"))]
-unsafe fn fwd_boundary(t: &PrimeTables, a: &[u32; N], b: &[u32; N], out: &mut [u64; N]) {
+unsafe fn fwd_boundary(t: &PrimeTables, ab: &[L; N], out: &mut [u64; N]) {
     let mut xab = [L::splat(0); N];
-    dif4_2_simd(a, b, &mut xab, &t.psip, &t.wp, t.wp[N / 4], t.p);
+    dif4_2_simd(ab, &mut xab, &t.psip, &t.wp, t.wp[N / 4], t.p);
     boundary_simd(&xab, out, t);
+}
+
+/// Pack the two u32 operand arrays into one array of (a,b) lane pairs, so the forward's
+/// per-input packing is done once instead of once per prime.
+#[cfg_attr(target_arch = "wasm32", target_feature(enable = "simd128"))]
+unsafe fn pack_ab(a: &[u32; N], b: &[u32; N]) -> [L; N] {
+    let mut ab = [L::splat(0); N];
+    for i in 0..N {
+        *ab.get_unchecked_mut(i) = L::new(*a.get_unchecked(i) as u64, *b.get_unchecked(i) as u64);
+    }
+    ab
 }
 
 /// Create a plan (precomputes NTT tables — free under the metric).
@@ -917,9 +929,10 @@ unsafe fn final_crt(x0: &[u64; N], x1: &[u64; N], x2: &[u64; N], plan: &Plan, re
 
 /// Negacyclic polynomial multiplication: a(X) * b(X) mod (X^1024+1).
 pub fn poly_mul(plan: &mut Plan, a: &[u32; 1024], b: &[u32; 1024]) -> [u32; 1024] {
-    let x0 = convolve_prefinal(&plan.t[0], a, b);
-    let x1 = convolve_prefinal(&plan.t[1], a, b);
-    let x2 = convolve_prefinal(&plan.t[2], a, b);
+    let ab = unsafe { pack_ab(a, b) };
+    let x0 = convolve_prefinal(&plan.t[0], &ab);
+    let x1 = convolve_prefinal(&plan.t[1], &ab);
+    let x2 = convolve_prefinal(&plan.t[2], &ab);
 
     let mut res = [0u32; N];
     unsafe {
