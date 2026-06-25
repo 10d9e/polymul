@@ -492,26 +492,36 @@ unsafe fn r4_lazy_l(
     a: L, b: L, c: L, d: L, pv: L, p2v: L, cav: L, icp: L, triv: bool,
     t1p: L, t2p: L, t3p: L,
 ) -> (L, L, L, L) {
-    let s0 = red2p_l(a.add(c), p2v);
-    let s2 = red2p_l(b.add(d), p2v);
-    // s1 feeds only Plantard multiplies (non-triv) which tolerate any non-negative
-    // value < 8p, so it stays lazy in [0,4p). The triv path red2p's the outputs, so it
-    // needs the reduced [0,2p) form.
-    let s1 = if triv { red2p_l(a.add(p2v).sub(c), p2v) } else { a.add(p2v).sub(c) };
     let s3 = b.add(p2v).sub(d); // in [0,4p); feeds only the lazy Plantard
     let is3 = plantard_lv(s3, icp, pv, cav);
-    let y0 = red2p_l(s0.add(s2), p2v);
-    let y2 = s0.add(p2v).sub(s2);
-    let y1 = s1.add(is3);
-    let y3 = s1.add(p2v).sub(is3);
     if triv {
-        (y0, red2p_l(y1, p2v), red2p_l(y2, p2v), red2p_l(y3, p2v))
-    } else {
+        // Trivial twiddles: outputs are red2p'd (not Plantard'd), so the sums must be
+        // reduced to [0,2p) along the way.
+        let s0 = red2p_l(a.add(c), p2v);
+        let s2 = red2p_l(b.add(d), p2v);
+        let s1 = red2p_l(a.add(p2v).sub(c), p2v);
+        let y0 = red2p_l(s0.add(s2), p2v);
+        let y1 = s1.add(is3);
         (
             y0,
-            plantard_lv(y1, t1p, pv, cav),
-            plantard_lv(y2, t2p, pv, cav),
-            plantard_lv(y3, t3p, pv, cav),
+            red2p_l(y1, p2v),
+            red2p_l(s0.add(p2v).sub(s2), p2v),
+            red2p_l(s1.add(p2v).sub(is3), p2v),
+        )
+    } else {
+        // s0,s1,s2 feed only the leg-0 reduction and the output Plantards (which
+        // tolerate < 8p), so they stay lazy in [0,4p); only y0 (untwiddled, must be
+        // [0,2p) for the next stage) is reduced, in one 8p->2p two-step.
+        let p4v = p2v.add(p2v);
+        let s0 = a.add(c); // [0,4p)
+        let s2 = b.add(d); // [0,4p)
+        let s1 = a.add(p2v).sub(c); // [0,4p)
+        let y0 = red2p_l(red2p_l(s0.add(s2), p4v), p2v); // [0,8p) -> [0,2p)
+        (
+            y0,
+            plantard_lv(s1.add(is3), t1p, pv, cav), // y1 in [0,6p)
+            plantard_lv(s0.add(p4v).sub(s2), t2p, pv, cav), // y2 in (0,8p)
+            plantard_lv(s1.add(p2v).sub(is3), t3p, pv, cav), // y3 in (0,6p)
         )
     }
 }
