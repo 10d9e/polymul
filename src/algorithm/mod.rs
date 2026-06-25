@@ -631,39 +631,70 @@ unsafe fn dif4_2_simd(
         *xab.get_unchecked_mut(j + 3 * len0) = y3;
         j += 1;
     }
-    // Remaining strided stages (half-blocks 64, 16) on xab. The stage twiddle
-    // depends only on `e` (the butterfly column), not on the block `i`, so the
-    // butterfly loop is the OUTER loop: each twiddle vector is loaded once and the
-    // inner block loop reuses it from registers (instead of reloading per block).
-    let mut len = N / 16;
-    while len >= 16 {
-        let step = N / (4 * len);
-        let mut e = 0usize;
-        let mut jj = 0;
-        while jj < len {
-            let (t1p, t2p, t3p) = twiddles3_splat(wp, e);
-            let triv = e == 0;
-            let mut i = 0;
-            while i < N {
-                let base = i + jj;
-                let (y0, y1, y2, y3) = r4_lazy_l(
-                    *xab.get_unchecked(base),
-                    *xab.get_unchecked(base + len),
-                    *xab.get_unchecked(base + 2 * len),
-                    *xab.get_unchecked(base + 3 * len),
-                    pv, p2v, cav, icpv, triv, t1p, t2p, t3p,
-                );
-                *xab.get_unchecked_mut(base) = y0;
-                *xab.get_unchecked_mut(base + len) = y1;
-                *xab.get_unchecked_mut(base + 2 * len) = y2;
-                *xab.get_unchecked_mut(base + 3 * len) = y3;
-                i += 4 * len;
-            }
-            e += step;
-            jj += 1;
+    // The two remaining strided stages (half-blocks 64 and 16) are fused into ONE
+    // radix-16 pass over xab, halving this section's memory round-trips. Column-outer
+    // (twiddles hoisted across the 4 blocks) with the 16-element tile held in explicit
+    // named locals so it scalarizes to registers despite the strided gather/scatter.
+    let icp_pack = (icpv, pv, p2v, cav);
+    let mut jj = 0;
+    while jj < 16 {
+        // sub-stage A (len=64) twiddles per group k: w^{4jj+64k}; sub-stage B: w^{16jj}.
+        let aw0 = twiddles3_splat(wp, 4 * jj);
+        let aw1 = twiddles3_splat(wp, 4 * jj + 64);
+        let aw2 = twiddles3_splat(wp, 4 * jj + 128);
+        let aw3 = twiddles3_splat(wp, 4 * jj + 192);
+        let bw = twiddles3_splat(wp, 16 * jj);
+        let trivb = jj == 0;
+        let mut i = 0;
+        while i < N {
+            let base = i + jj;
+            r16_mid_tile(xab.as_mut_ptr().add(base), aw0, aw1, aw2, aw3, bw, jj == 0, trivb, icp_pack);
+            i += 256;
         }
-        len >>= 2;
+        jj += 1;
     }
+}
+
+/// One fused radix-16 = radix-4(len=64) ∘ radix-4(len=16) butterfly on the 16 elements at
+/// `p[0], p[16], …, p[240]`. The tile is held in 16 named locals (guaranteed register
+/// residency under the strided access). `aw{k}` are the sub-stage-A twiddles for group k;
+/// `bw` the shared sub-stage-B twiddle.
+#[allow(clippy::too_many_arguments)]
+#[inline(always)]
+unsafe fn r16_mid_tile(
+    p: *mut L, aw0: (L, L, L), aw1: (L, L, L), aw2: (L, L, L), aw3: (L, L, L), bw: (L, L, L),
+    triva0: bool, trivb: bool, pk: (L, L, L, L),
+) {
+    let (icpv, pv, p2v, cav) = pk;
+    let g = |q: usize| *p.add(q * 16);
+    let (mut t0, mut t1, mut t2, mut t3) = (g(0), g(1), g(2), g(3));
+    let (mut t4, mut t5, mut t6, mut t7) = (g(4), g(5), g(6), g(7));
+    let (mut t8, mut t9, mut t10, mut t11) = (g(8), g(9), g(10), g(11));
+    let (mut t12, mut t13, mut t14, mut t15) = (g(12), g(13), g(14), g(15));
+    // sub-stage A: groups {k,k+4,k+8,k+12}, k=0..3.
+    let r = |a, b, c, d, tw: (L, L, L), tr| r4_lazy_l(a, b, c, d, pv, p2v, cav, icpv, tr, tw.0, tw.1, tw.2);
+    let (a, b, c, d) = r(t0, t4, t8, t12, aw0, triva0);
+    t0 = a; t4 = b; t8 = c; t12 = d;
+    let (a, b, c, d) = r(t1, t5, t9, t13, aw1, false);
+    t1 = a; t5 = b; t9 = c; t13 = d;
+    let (a, b, c, d) = r(t2, t6, t10, t14, aw2, false);
+    t2 = a; t6 = b; t10 = c; t14 = d;
+    let (a, b, c, d) = r(t3, t7, t11, t15, aw3, false);
+    t3 = a; t7 = b; t11 = c; t15 = d;
+    // sub-stage B: groups {4m..4m+3}, shared twiddle bw.
+    let (a, b, c, d) = r(t0, t1, t2, t3, bw, trivb);
+    t0 = a; t1 = b; t2 = c; t3 = d;
+    let (a, b, c, d) = r(t4, t5, t6, t7, bw, trivb);
+    t4 = a; t5 = b; t6 = c; t7 = d;
+    let (a, b, c, d) = r(t8, t9, t10, t11, bw, trivb);
+    t8 = a; t9 = b; t10 = c; t11 = d;
+    let (a, b, c, d) = r(t12, t13, t14, t15, bw, trivb);
+    t12 = a; t13 = b; t14 = c; t15 = d;
+    let mut s = |q: usize, v: L| *p.add(q * 16) = v;
+    s(0, t0); s(1, t1); s(2, t2); s(3, t3);
+    s(4, t4); s(5, t5); s(6, t6); s(7, t7);
+    s(8, t8); s(9, t9); s(10, t10); s(11, t11);
+    s(12, t12); s(13, t13); s(14, t14); s(15, t15);
 }
 
 // ---- Contiguous 16-element tile sub-stages (used by the fused boundary pass) ----
