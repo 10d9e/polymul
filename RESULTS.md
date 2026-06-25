@@ -3,7 +3,7 @@
 Leaderboard of recorded submissions. Full narratives live in
 [`history/entries/`](history/entries/).
 
-**Current record: 12695456** (@10d9e, entry 0044)
+**Current record: 12139952** (@10d9e, entry 0045)
 
 | # | date | author | SCORE | Δ vs record | commit | entry | note |
 |---|------|--------|-------|-------------|--------|-------|------|
@@ -51,3 +51,4 @@ Leaderboard of recorded submissions. Full narratives live in
 | 0042 | 2026-06-25 | @10d9e | 13474592 | -638816 (new record) | `3cea8ea` | [0042](history/entries/0042--10d9e.md) | Vectorize the Garner CRT reconstruction. The three per-prime residue arrays r0,r… |
 | 0043 | 2026-06-25 | @10d9e | 13039472 | -435120 (new record) | `036eac5` | [0043](history/entries/0043--10d9e.md) | Vectorize the second inverse DIT sub-stage (dit_l4) inside the fused boundary ti… |
 | 0044 | 2026-06-25 | @10d9e | 12695456 | -344016 (new record) | `0f957f4` | [0044](history/entries/0044--10d9e.md) | Vectorize the spectral pointwise Montgomery product in the fused boundary. The p… |
+| 0045 | 2026-06-25 | @10d9e | 12139952 | -555504 (new record) | `00bc58c` | [0045](history/entries/0045--10d9e.md) | Eliminate the per-butterfly splat in the forward NTT. The forward pairs operands… |
