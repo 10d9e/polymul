@@ -104,17 +104,6 @@ fn modinv(a: u64, m: u64) -> u64 {
     modpow(a, m - 2, m)
 }
 
-/// Reduce a value in [0, 4p) into [0, 2p).
-#[inline(always)]
-fn red2p(a: u64, p: u64) -> u64 {
-    let t = p << 1;
-    if a >= t {
-        a - t
-    } else {
-        a
-    }
-}
-
 /// Vectorized Montgomery product, two independent products per i64x2 (lane k holds
 /// `a_k*b_k*R^{-1} mod p` in [0,2p)). `maskv = splat(0xffffffff)`, `pinvv =
 /// splat(-p^{-1} mod 2^32)`. Inputs a,b < 2p < 2^32 so a*b < 4p^2 < p*R.
@@ -216,6 +205,14 @@ impl L {
     unsafe fn store(p: *mut u64, v: L) {
         v128_store(p as *mut v128, v.0);
     }
+    /// Store the low 32 bits of lanes 0,1 into two adjacent u32 (p[0], p[1]) — one
+    /// shuffle + one 8-byte store instead of two lane extracts + two scalar stores.
+    #[inline]
+    #[target_feature(enable = "simd128")]
+    unsafe fn store_u32x2(p: *mut u32, v: L) {
+        let packed = i32x4_shuffle::<0, 2, 0, 2>(v.0, v.0);
+        v128_store64_lane::<0>(packed, p as *mut u64);
+    }
     #[inline]
     #[target_feature(enable = "simd128")]
     unsafe fn and(self, o: L) -> L {
@@ -298,6 +295,11 @@ impl L {
     unsafe fn store(p: *mut u64, v: L) {
         *p = v.0;
         *p.add(1) = v.1;
+    }
+    #[inline(always)]
+    unsafe fn store_u32x2(p: *mut u32, v: L) {
+        *p = v.0 as u32;
+        *p.add(1) = v.1 as u32;
     }
     #[inline(always)]
     unsafe fn and(self, o: L) -> L {
@@ -647,14 +649,6 @@ unsafe fn dif_l1_v(t: &mut [L; 16], cav: L, icpv: L, pv: L, p2v: L) {
     }
 }
 
-/// Scalar Plantard multiply by a precomputed constant (single value), used by the
-/// scalar inverse first DIT sub-stage. Result in [0,2p) for any non-negative x < 8p.
-#[inline(always)]
-fn plantard_s(x: u64, bp: u64, p: u64) -> u64 {
-    let h = ((x.wrapping_mul(bp) as i64) >> 32) as u64; // signed high 32
-    (h.wrapping_add((1u64 << 32) + 1).wrapping_mul(p)) >> 32
-}
-
 /// First inverse sub-stage (trivial twiddles) on the [0,2p) Montgomery pointwise
 /// output. The sums stay lazy in [0,4p): the outputs (in [0,8p)) are consumed by the
 /// next sub-stage (`dit_l4_v`), whose `a` reduction and Plantards both tolerate [0,8p),
@@ -928,10 +922,7 @@ unsafe fn final_crt(x0: &[u64; N], x1: &[u64; N], x2: &[u64; N], plan: &Plan, re
         let (a0, a1, a2, a3) = final_prime(&plan.t[0], x0, j, cav, true);
         let (b0, b1, b2, b3) = final_prime(&plan.t[1], x1, j, cav, false);
         let (c0, c1, c2, c3) = final_prime(&plan.t[2], x2, j, cav, false);
-        let put = |pos: usize, out: L| {
-            *rp.add(pos) = out.lane0() as u32;
-            *rp.add(pos + 1) = out.lane1() as u32;
-        };
+        let put = |pos: usize, out: L| L::store_u32x2(rp.add(pos), out);
         put(j, crt_one(a0, b0, c0, plan, cav));
         put(j + N / 4, crt_one(a1, b1, c1, plan, cav));
         put(j + N / 2, crt_one(a2, b2, c2, plan, cav));
