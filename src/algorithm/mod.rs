@@ -19,11 +19,12 @@
 // so the integer is recovered exactly, then reduced mod 2^32.
 //
 // DIVISION-FREE: every modular multiply by a precomputed constant (twiddles, the
-// psi pre/post weights, and the Garner mixing constants) uses Shoup's method —
-// one extra multiply + shift to get the quotient, then a single conditional
-// subtraction — instead of a hardware `%`. Under a cost model where integer
-// division is ~25x an add (as on real hardware), this is far cheaper than the
-// `%`-reduction the NTT is usually written with.
+// psi pre/post weights, and the Garner mixing constants) uses Plantard's method —
+// one signed high-half multiply for the quotient estimate and one multiply by p,
+// no hardware `%`. Plantard needs only TWO multiplies and ONE precomputed constant
+// per multiplier (vs Shoup's three multiplies and two constants), so under a cost
+// model where division is ~25x an add it is far cheaper than `%`, and cheaper than
+// Shoup too. The variable-by-variable pointwise product stays Montgomery.
 //
 // SIMD: the forward transform multiplies BOTH operands (a and b) by the same
 // twiddles in lockstep, so a and b are packed into the two lanes of an i64x2
@@ -41,15 +42,16 @@
 
 const N: usize = 1024;
 
-// Three primes p with 2048 | (p-1) and primitive root 3; each p < 2^30 so that
-// products of residues fit in u64.
+// Three primes p with 2048 | (p-1) and primitive root 3; each p ~ 2^27 so that
+// products of residues fit in u64 and lazy values keep ~32x headroom under 2^32.
+// Their product is ~2^81 > 2^75, enough to recover the exact signed product mod 2^32.
 const P0: u64 = 134250497;
 const P1: u64 = 134275073;
 const P2: u64 = 134330369;
 const GEN: u64 = 3; // primitive root for all three primes
 
-/// Per-prime NTT tables. Each multiplier `c` is stored alongside its Shoup
-/// constant `c' = floor(c * 2^32 / p)` so that `c * x mod p` needs no division.
+/// Per-prime NTT tables. Each multiplier `c` is stored as a single Plantard constant
+/// `bprime` so that `c * x mod p` needs no division (see `plantard_const`).
 struct PrimeTables {
     p: u64,
     // Each constant modular multiply uses Plantard's method: one precomputed u64
@@ -66,13 +68,10 @@ struct PrimeTables {
 /// Opaque plan holding precomputed tables (built once in `plan_new`, free).
 pub struct Plan {
     t: [PrimeTables; 3],
-    // Garner CRT mixing constants (+ their Shoup forms for division-free use).
-    inv_p0_mod_p1: u32,
-    inv_p0_mod_p1_s: u32,
-    p0_mod_p2: u32,
-    p0_mod_p2_s: u32,
-    inv_m01_mod_p2: u32,
-    inv_m01_mod_p2_s: u32,
+    // Garner CRT mixing constants as Plantard constants (division-free).
+    inv_p0_mod_p1_p: u64,
+    p0_mod_p2_p: u64,
+    inv_m01_mod_p2_p: u64,
     p2_half: u64,
     // low-32-bit constants for mod-2^32 reconstruction.
     p0_lo: u32,
@@ -98,12 +97,6 @@ fn modpow(b: u64, mut e: u64, m: u64) -> u64 {
 #[inline(always)]
 fn modinv(a: u64, m: u64) -> u64 {
     modpow(a, m - 2, m)
-}
-
-/// Shoup constant for multiplying by `c` modulo `p` (p < 2^31): floor(c<<32 / p).
-#[inline(always)]
-fn shoup_const(c: u64, p: u64) -> u32 {
-    (((c as u128) << 32) / p as u128) as u32
 }
 
 /// Reduce a value in [0, 4p) into [0, 2p).
@@ -316,14 +309,6 @@ unsafe fn red2p_l(a: L, p2v: L) -> L {
     let t = a.sub(p2v);
     let m = a.ge(p2v);
     L::select(m, t, a)
-}
-
-/// Lazy Shoup with the multiplier already in vector form (different constant per
-/// lane). Result in [0,2p). `pv = splat(p)`.
-#[inline(always)]
-unsafe fn shoup_lazy_lv(x: L, cv: L, csv: L, pv: L) -> L {
-    let q = x.mul(csv).shr32();
-    x.mul(cv).sub(q.mul(pv))
 }
 
 /// Plantard modular multiply by a precomputed constant: `bpv` lanes hold
@@ -825,12 +810,9 @@ pub fn plan_new() -> Plan {
     let invm01 = modinv(m01 % P2, P2);
     Plan {
         t,
-        inv_p0_mod_p1: inv01 as u32,
-        inv_p0_mod_p1_s: shoup_const(inv01, P1),
-        p0_mod_p2: p0m2 as u32,
-        p0_mod_p2_s: shoup_const(p0m2, P2),
-        inv_m01_mod_p2: invm01 as u32,
-        inv_m01_mod_p2_s: shoup_const(invm01, P2),
+        inv_p0_mod_p1_p: plantard_const(inv01, P1),
+        p0_mod_p2_p: plantard_const(p0m2, P2),
+        inv_m01_mod_p2_p: plantard_const(invm01, P2),
         p2_half: P2 >> 1,
         p0_lo: P0 as u32,
         m01_lo: m01 as u32,
@@ -847,12 +829,10 @@ unsafe fn crt_combine(r0: &[u64; N], r1: &[u64; N], r2: &[u64; N], plan: &Plan, 
     let p1v = L::splat(P1);
     let p2v = L::splat(P2);
     let p2_3v = L::splat(3 * P2);
-    let inv01_v = L::splat(plan.inv_p0_mod_p1 as u64);
-    let inv01_s_v = L::splat(plan.inv_p0_mod_p1_s as u64);
-    let p0m2_v = L::splat(plan.p0_mod_p2 as u64);
-    let p0m2_s_v = L::splat(plan.p0_mod_p2_s as u64);
-    let invm01_v = L::splat(plan.inv_m01_mod_p2 as u64);
-    let invm01_s_v = L::splat(plan.inv_m01_mod_p2_s as u64);
+    let cav = L::splat((1u64 << 32) + 1);
+    let inv01_v = L::splat(plan.inv_p0_mod_p1_p);
+    let p0m2_v = L::splat(plan.p0_mod_p2_p);
+    let invm01_v = L::splat(plan.inv_m01_mod_p2_p);
     let p2_half_v = L::splat(plan.p2_half);
     let p0_lo_v = L::splat(plan.p0_lo as u64);
     let m01_lo_v = L::splat(plan.m01_lo as u64);
@@ -865,12 +845,12 @@ unsafe fn crt_combine(r0: &[u64; N], r1: &[u64; N], r2: &[u64; N], plan: &Plan, 
         let v0 = L::load(r0p.add(j)); // < P0 < P1
         // v1 = (r1 - v0) * inv(P0) mod P1.
         let t1 = L::load(r1p.add(j)).add(p1v).sub(v0); // [0, 2*P1)
-        let v1 = redp_l(shoup_lazy_lv(t1, inv01_v, inv01_s_v, p1v), p1v);
+        let v1 = redp_l(plantard_lv(t1, inv01_v, p1v, cav), p1v);
         // w = (v0 + P0*v1) mod P2 kept lazy in [0, 3*P2); v2 = (r2 - w) * inv(P0*P1).
-        let term = redp_l(shoup_lazy_lv(v1, p0m2_v, p0m2_s_v, p2v), p2v);
+        let term = redp_l(plantard_lv(v1, p0m2_v, p2v, cav), p2v);
         let w = v0.add(term); // < P0 + P2 < 3*P2
         let t2 = L::load(r2p.add(j)).add(p2_3v).sub(w); // (0, 4*P2)
-        let v2 = redp_l(shoup_lazy_lv(t2, invm01_v, invm01_s_v, p2v), p2v);
+        let v2 = redp_l(plantard_lv(t2, invm01_v, p2v, cav), p2v);
         // u = v0 + P0*v1 + P0*P1*v2 ; low 32 bits = product mod 2^32, sign from v2.
         let lo = v0.add(p0_lo_v.mul(v1)).add(m01_lo_v.mul(v2));
         let m = v2.ge(p2_half_v);
