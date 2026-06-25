@@ -112,16 +112,6 @@ fn shoup(x: u64, c: u32, cs: u32, p: u64) -> u64 {
     }
 }
 
-/// Reduce a value in [0, 2p) into [0, p).
-#[inline(always)]
-fn red(a: u64, p: u64) -> u64 {
-    if a >= p {
-        a - p
-    } else {
-        a
-    }
-}
-
 /// Lazy Shoup: `x * c (mod p)` left in [0, 2p) — no final conditional subtract.
 /// Valid (result in [0,2p)) for ANY x < 2^32, because with the 2^32 Shoup constant
 /// the quotient error is at most 1 (Harvey's trick). Since the butterflies keep
@@ -422,53 +412,32 @@ unsafe fn twiddles3(w: &[u32; N], ws: &[u32; N], e: usize) -> (u32, u32, u32, u3
     }
 }
 
-/// One inverse radix-4 DIT butterfly on four values (lazy, in/out [0,2p)).
-/// Applies the inverse twiddles to b,c,d then the inverse 4-point DFT (root J).
-/// Returns outputs for offsets +0, +len, +2len, +3len. `triv` skips twiddles.
+/// One inverse radix-4 DIT butterfly, Harvey-lazy: inputs and outputs in [0,4p).
+/// The twiddled inputs go through `shoup_lazy` (which tolerates < 2^32) so only the
+/// untwiddled input `a` (and, for a trivial butterfly, b,c,d) needs reducing; the
+/// four outputs stay unreduced in [0,4p). Outputs are for offsets +0,+len,+2len,+3len.
 #[allow(clippy::too_many_arguments)]
 #[inline(always)]
 fn r4_lazy_dit(
     a: u64, mut b: u64, mut c: u64, mut d: u64, p: u64, p2: u64, jc: u32, jcs: u32, triv: bool,
     t1c: u32, t1s: u32, t2c: u32, t2s: u32, t3c: u32, t3s: u32,
 ) -> (u64, u64, u64, u64) {
-    if !triv {
-        b = shoup_lazy(b, t1c, t1s, p);
+    let a = red2p(a, p); // [0,4p) -> [0,2p)
+    if triv {
+        b = red2p(b, p);
+        c = red2p(c, p);
+        d = red2p(d, p);
+    } else {
+        b = shoup_lazy(b, t1c, t1s, p); // [0,4p) input -> [0,2p)
         c = shoup_lazy(c, t2c, t2s, p);
         d = shoup_lazy(d, t3c, t3s, p);
     }
     let s0 = red2p(a + c, p);
     let s1 = red2p(a + p2 - c, p);
     let s2 = red2p(b + d, p);
-    let s3 = b + p2 - d; // in [0,4p); feeds only the lazy Shoup, which tolerates < 2^32
+    let s3 = b + p2 - d; // in [0,4p); feeds only the lazy Shoup
     let js3 = shoup_lazy(s3, jc, jcs, p);
-    (
-        red2p(s0 + s2, p),
-        red2p(s1 + js3, p),
-        red2p(s0 + p2 - s2, p),
-        red2p(s1 + p2 - js3, p),
-    )
-}
-
-/// Like `r4_lazy_dit` but returns the outputs UNREDUCED (in [0,4p)). Used only by
-/// the final DIT stage, whose outputs feed the post-weight Shoup (which accepts
-/// any input < 2^32), so the four output reductions are unnecessary there.
-#[allow(clippy::too_many_arguments)]
-#[inline(always)]
-fn r4_lazy_dit_raw(
-    a: u64, mut b: u64, mut c: u64, mut d: u64, p: u64, p2: u64, jc: u32, jcs: u32, triv: bool,
-    t1c: u32, t1s: u32, t2c: u32, t2s: u32, t3c: u32, t3s: u32,
-) -> (u64, u64, u64, u64) {
-    if !triv {
-        b = shoup_lazy(b, t1c, t1s, p);
-        c = shoup_lazy(c, t2c, t2s, p);
-        d = shoup_lazy(d, t3c, t3s, p);
-    }
-    let s0 = red2p(a + c, p);
-    let s1 = red2p(a + p2 - c, p);
-    let s2 = red2p(b + d, p);
-    let s3 = b + p2 - d;
-    let js3 = shoup_lazy(s3, jc, jcs, p);
-    (s0 + s2, s1 + js3, s0 + p2 - s2, s1 + p2 - js3) // each in [0,4p)
+    (s0 + s2, s1 + js3, s0 + p2 - s2, s1 + p2 - js3) // each in [0,4p), unreduced
 }
 
 /// Fused first two inverse DIT stages (half-block sizes 1 then 4) on one contiguous
@@ -546,24 +515,18 @@ fn dit4(
             let mut j = 0;
             while j < len {
                 unsafe {
-                    let a = *x.get_unchecked(i + j);
-                    let mut b = *x.get_unchecked(i + j + len);
-                    let mut c = *x.get_unchecked(i + j + 2 * len);
-                    let mut d = *x.get_unchecked(i + j + 3 * len);
-                    if e != 0 {
-                        b = shoup_lazy(b, *iw.get_unchecked(e), *iws.get_unchecked(e), p);
-                        c = shoup_lazy(c, *iw.get_unchecked(2 * e), *iws.get_unchecked(2 * e), p);
-                        d = shoup_lazy(d, *iw.get_unchecked(3 * e), *iws.get_unchecked(3 * e), p);
-                    }
-                    let s0 = red2p(a + c, p);
-                    let s1 = red2p(a + p2 - c, p);
-                    let s2 = red2p(b + d, p);
-                    let s3 = b + p2 - d; // in [0,4p); feeds only the lazy Shoup, which tolerates < 2^32
-                    let js3 = shoup_lazy(s3, jc, jcs, p); // J * (b - d), in [0,2p)
-                    *x.get_unchecked_mut(i + j) = red2p(s0 + s2, p);
-                    *x.get_unchecked_mut(i + j + 2 * len) = red2p(s0 + p2 - s2, p);
-                    *x.get_unchecked_mut(i + j + len) = red2p(s1 + js3, p);
-                    *x.get_unchecked_mut(i + j + 3 * len) = red2p(s1 + p2 - js3, p);
+                    let (t1c, t1s, t2c, t2s, t3c, t3s) = twiddles3(iw, iws, e);
+                    let (o0, o1, o2, o3) = r4_lazy_dit(
+                        *x.get_unchecked(i + j),
+                        *x.get_unchecked(i + j + len),
+                        *x.get_unchecked(i + j + 2 * len),
+                        *x.get_unchecked(i + j + 3 * len),
+                        p, p2, jc, jcs, e == 0, t1c, t1s, t2c, t2s, t3c, t3s,
+                    );
+                    *x.get_unchecked_mut(i + j) = o0;
+                    *x.get_unchecked_mut(i + j + len) = o1;
+                    *x.get_unchecked_mut(i + j + 2 * len) = o2;
+                    *x.get_unchecked_mut(i + j + 3 * len) = o3;
                 }
                 e += step;
                 j += 1;
@@ -580,7 +543,7 @@ fn dit4(
         unsafe {
             let e = j; // step = 1 at the last stage
             let (it1c, it1s, it2c, it2s, it3c, it3s) = twiddles3(iw, iws, e);
-            let (o0, o1, o2, o3) = r4_lazy_dit_raw(
+            let (o0, o1, o2, o3) = r4_lazy_dit(
                 *x.get_unchecked(j),
                 *x.get_unchecked(j + N / 4),
                 *x.get_unchecked(j + N / 2),
