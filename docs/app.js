@@ -64,6 +64,9 @@ function runningRecordFrontier(entries) {
   });
 }
 
+let CHART = null;
+let CHART_STATE = null;
+
 function renderChart(data) {
   const scored = data.entries.filter((e) => e.score != null);
   const labels = scored.map((e) => `#${e.id}`);
@@ -75,19 +78,22 @@ function renderChart(data) {
     border: "#000",
   }));
 
+  // Module-level state so the range slider can re-slice the series in place.
+  CHART_STATE = { scored, labels, scores, frontier, styles, lo: 0, hi: scored.length - 1 };
+
   const ctx = $("#scoreChart").getContext("2d");
   const grad = ctx.createLinearGradient(0, 0, 0, 320);
   grad.addColorStop(0, "rgba(34, 211, 238, 0.12)");
   grad.addColorStop(1, "rgba(34, 211, 238, 0)");
 
-  new Chart(ctx, {
+  CHART = new Chart(ctx, {
     type: "line",
     data: {
-      labels,
+      labels: labels.slice(),
       datasets: [
         {
           label: "Best SCORE so far",
-          data: frontier,
+          data: frontier.slice(),
           borderColor: "rgba(34, 211, 238, 0.85)",
           backgroundColor: grad,
           fill: true,
@@ -99,7 +105,7 @@ function renderChart(data) {
         },
         {
           label: "Submissions",
-          data: scores,
+          data: scores.slice(),
           showLine: false,
           pointRadius: styles.map((s) => s.radius),
           pointBackgroundColor: styles.map((s) => s.bg),
@@ -112,6 +118,7 @@ function renderChart(data) {
     options: {
       responsive: true,
       maintainAspectRatio: false,
+      animation: { duration: 250 },
       plugins: {
         legend: {
           display: true,
@@ -126,10 +133,11 @@ function renderChart(data) {
           filter: (item) => item.datasetIndex === 1,
           callbacks: {
             title: (items) => {
-              const e = scored[items[0].dataIndex];
+              const e = CHART_STATE.scored[CHART_STATE.lo + items[0].dataIndex];
               return `#${e.id} · ${e.author}`;
             },
-            label: (item) => `SCORE: ${fmt(scored[item.dataIndex].score)} WORK`,
+            label: (item) =>
+              `SCORE: ${fmt(CHART_STATE.scored[CHART_STATE.lo + item.dataIndex].score)} WORK`,
           },
         },
       },
@@ -155,6 +163,69 @@ function renderChart(data) {
       },
     },
   });
+
+  setupRangeSlider();
+}
+
+// Re-slice the chart to the inclusive index window [lo, hi]; the y-axis
+// auto-rescales to the window, which is what makes flat tail regions readable.
+function applyRange(lo, hi) {
+  if (!CHART || !CHART_STATE) return;
+  const st = CHART_STATE;
+  st.lo = lo;
+  st.hi = hi;
+  CHART.data.labels = st.labels.slice(lo, hi + 1);
+  CHART.data.datasets[0].data = st.frontier.slice(lo, hi + 1);
+  CHART.data.datasets[1].data = st.scores.slice(lo, hi + 1);
+  const sl = st.styles.slice(lo, hi + 1);
+  CHART.data.datasets[1].pointRadius = sl.map((s) => s.radius);
+  CHART.data.datasets[1].pointBackgroundColor = sl.map((s) => s.bg);
+  CHART.data.datasets[1].pointBorderColor = sl.map((s) => s.border);
+  CHART.update();
+}
+
+function setupRangeSlider() {
+  const ctrl = $("#rangeControl");
+  const minI = $("#rangeMin");
+  const maxI = $("#rangeMax");
+  const fill = $("#rangeFill");
+  const label = $("#rangeLabel");
+  const n = CHART_STATE.scored.length;
+  if (n < 4) { ctrl.hidden = true; return; } // not worth slicing a tiny series
+  ctrl.hidden = false;
+
+  const last = n - 1;
+  minI.max = maxI.max = String(last);
+  minI.value = "0";
+  maxI.value = String(last);
+
+  const update = (ev) => {
+    let lo = +minI.value;
+    let hi = +maxI.value;
+    if (lo > hi) {
+      // The thumb that moved pushes the other so they never cross.
+      if (ev && ev.target === maxI) { lo = hi; minI.value = String(lo); }
+      else { hi = lo; maxI.value = String(hi); }
+    }
+    // Keep whichever thumb sits at the far end clickable when they overlap.
+    minI.style.zIndex = lo > last / 2 ? 5 : 4;
+    const pl = (lo / last) * 100;
+    const ph = (hi / last) * 100;
+    fill.style.left = pl + "%";
+    fill.style.right = 100 - ph + "%";
+    const s = CHART_STATE.scored;
+    label.textContent = `#${s[lo].id} → #${s[hi].id} · ${hi - lo + 1} of ${n}`;
+    applyRange(lo, hi);
+  };
+
+  minI.addEventListener("input", update);
+  maxI.addEventListener("input", update);
+  $("#rangeReset").addEventListener("click", () => {
+    minI.value = "0";
+    maxI.value = String(last);
+    update();
+  });
+  update();
 }
 
 let ENTRIES_BY_ID = {};

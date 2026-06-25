@@ -38,6 +38,18 @@
       <div class="chart-box">
         <canvas id="scoreChart"></canvas>
       </div>
+      <div class="range-control" id="rangeControl" hidden>
+        <div class="range-slider">
+          <div class="range-track"></div>
+          <div class="range-fill" id="rangeFill"></div>
+          <input type="range" id="rangeMin" min="0" max="0" value="0" step="1" aria-label="Range start" />
+          <input type="range" id="rangeMax" min="0" max="0" value="0" step="1" aria-label="Range end" />
+        </div>
+        <div class="range-readout">
+          <span id="rangeLabel"></span>
+          <button type="button" class="range-reset" id="rangeReset">reset</button>
+        </div>
+      </div>
     </section>
 
     <section class="panel">
