@@ -52,12 +52,17 @@ const GEN: u64 = 3; // primitive root for all three primes
 /// constant `c' = floor(c * 2^32 / p)` so that `c * x mod p` needs no division.
 struct PrimeTables {
     p: u64,
-    psi: [u32; N],   // psi^j               (negacyclic pre-weight)
-    psis: [u32; N],  //   "  Shoup constant
+    // Forward tables are stored as u64 so the constant broadcast in each butterfly
+    // compiles to a single `v128.load64_splat` (load + splat fused), since the
+    // forward pairs operand a/b in the two lanes and multiplies both by the SAME
+    // twiddle. The inverse pairs adjacent butterflies (different twiddle per lane)
+    // so its tables stay u32 and are loaded as lane pairs.
+    psi: [u64; N],   // psi^j               (negacyclic pre-weight)
+    psis: [u64; N],  //   "  Shoup constant
     ipsi: [u32; N],  // psi^{-j} * N^{-1}    (post-weight, folds inverse scale)
     ipsis: [u32; N], //   "  Shoup constant
-    w: [u32; N],     // w^e   forward twiddle powers (w = psi^2, a primitive N-th root)
-    ws: [u32; N],    //   "  Shoup constant
+    w: [u64; N],     // w^e   forward twiddle powers (w = psi^2, a primitive N-th root)
+    ws: [u64; N],    //   "  Shoup constant
     iw: [u32; N],    // w^{-e} inverse twiddle powers
     iws: [u32; N],   //   "  Shoup constant
     pinv: u32,       // -p^{-1} mod 2^32, for the Montgomery pointwise product
@@ -308,16 +313,6 @@ unsafe fn red2p_l(a: L, p2v: L) -> L {
     L::select(m, t, a)
 }
 
-/// Lanewise lazy Shoup `x * c mod p` left in [0,2p) (no final conditional sub).
-/// Valid for any lane < 2^32 (Harvey's bound). `pv = splat(p)`.
-#[inline(always)]
-unsafe fn shoup_lazy_l(x: L, c: u32, cs: u32, pv: L) -> L {
-    let cv = L::splat(c as u64);
-    let csv = L::splat(cs as u64);
-    let q = x.mul(csv).shr32();
-    x.mul(cv).sub(q.mul(pv))
-}
-
 /// Lazy Shoup with the multiplier already in vector form (different constant per
 /// lane). Result in [0,2p). `pv = splat(p)`.
 #[inline(always)]
@@ -408,8 +403,8 @@ fn build_tables(p: u64) -> PrimeTables {
     let mut iacc = 1u64; // psi^{-j}
     for j in 0..N {
         let pm = (acc as u128 * r_mod as u128 % p as u128) as u64; // psi^j * R  (Montgomery)
-        pt.psi[j] = pm as u32;
-        pt.psis[j] = shoup_const(pm, p);
+        pt.psi[j] = pm;
+        pt.psis[j] = shoup_const(pm, p) as u64;
         let ip = (iacc as u128 * ninv as u128 % p as u128) as u64; // psi^{-j} * N^{-1}
         let ipm = (ip as u128 * rinv as u128 % p as u128) as u64; //   * R^{-1} (de-Montgomery)
         pt.ipsi[j] = ipm as u32;
@@ -421,8 +416,8 @@ fn build_tables(p: u64) -> PrimeTables {
     let mut wacc = 1u64; // w^e
     let mut iwacc = 1u64; // w^{-e}
     for e in 0..N {
-        pt.w[e] = wacc as u32;
-        pt.ws[e] = shoup_const(wacc, p);
+        pt.w[e] = wacc;
+        pt.ws[e] = shoup_const(wacc, p) as u64;
         pt.iw[e] = iwacc as u32;
         pt.iws[e] = shoup_const(iwacc, p);
         wacc = (wacc as u128 * w_root as u128 % p as u128) as u64;
@@ -431,36 +426,34 @@ fn build_tables(p: u64) -> PrimeTables {
     pt
 }
 
-/// Load the three stage twiddles (w^e, w^{2e}, w^{3e}) and their Shoup constants.
+/// Forward stage twiddles (w^e, w^{2e}, w^{3e} and their Shoup constants), each
+/// broadcast to both lanes. The forward pairs operands a/b, which share the twiddle,
+/// so from a u64 table `L::splat(*ptr)` lowers to a single `v128.load64_splat` — the
+/// load and broadcast fuse into one instruction, with no separate splat op.
 #[inline(always)]
-unsafe fn twiddles3(w: &[u32; N], ws: &[u32; N], e: usize) -> (u32, u32, u32, u32, u32, u32) {
-    if e == 0 {
-        (0, 0, 0, 0, 0, 0)
-    } else {
-        (
-            *w.get_unchecked(e),
-            *ws.get_unchecked(e),
-            *w.get_unchecked(2 * e),
-            *ws.get_unchecked(2 * e),
-            *w.get_unchecked(3 * e),
-            *ws.get_unchecked(3 * e),
-        )
-    }
+unsafe fn twiddles3_splat(w: &[u64; N], ws: &[u64; N], e: usize) -> (L, L, L, L, L, L) {
+    (
+        L::splat(*w.get_unchecked(e)), L::splat(*ws.get_unchecked(e)),
+        L::splat(*w.get_unchecked(2 * e)), L::splat(*ws.get_unchecked(2 * e)),
+        L::splat(*w.get_unchecked(3 * e)), L::splat(*ws.get_unchecked(3 * e)),
+    )
 }
 
 /// One radix-4 DIF butterfly on four lane-vectors (lazy: in [0,2p), out [0,2p)).
-/// `triv` skips the (unit) stage twiddles. Both operands ride the two lanes.
+/// `triv` skips the (unit) stage twiddles. Both operands ride the two lanes; all
+/// twiddles arrive already broadcast (the 4th-root `icv`/`icsv` is hoisted by the
+/// caller, the stage twiddles come from `twiddles3_splat`).
 #[allow(clippy::too_many_arguments)]
 #[inline(always)]
 unsafe fn r4_lazy_l(
-    a: L, b: L, c: L, d: L, pv: L, p2v: L, ic: u32, ics: u32, triv: bool,
-    t1c: u32, t1s: u32, t2c: u32, t2s: u32, t3c: u32, t3s: u32,
+    a: L, b: L, c: L, d: L, pv: L, p2v: L, icv: L, icsv: L, triv: bool,
+    t1c: L, t1s: L, t2c: L, t2s: L, t3c: L, t3s: L,
 ) -> (L, L, L, L) {
     let s0 = red2p_l(a.add(c), p2v);
     let s2 = red2p_l(b.add(d), p2v);
     let s1 = red2p_l(a.add(p2v).sub(c), p2v);
     let s3 = b.add(p2v).sub(d); // in [0,4p); feeds only the lazy Shoup
-    let is3 = shoup_lazy_l(s3, ic, ics, pv);
+    let is3 = shoup_lazy_lv(s3, icv, icsv, pv);
     let y0 = red2p_l(s0.add(s2), p2v);
     let y2 = s0.add(p2v).sub(s2);
     let y1 = s1.add(is3);
@@ -470,9 +463,9 @@ unsafe fn r4_lazy_l(
     } else {
         (
             y0,
-            shoup_lazy_l(y1, t1c, t1s, pv),
-            shoup_lazy_l(y2, t2c, t2s, pv),
-            shoup_lazy_l(y3, t3c, t3s, pv),
+            shoup_lazy_lv(y1, t1c, t1s, pv),
+            shoup_lazy_lv(y2, t2c, t2s, pv),
+            shoup_lazy_lv(y3, t3c, t3s, pv),
         )
     }
 }
@@ -483,23 +476,25 @@ unsafe fn r4_lazy_l(
 #[allow(clippy::too_many_arguments)]
 #[cfg_attr(target_arch = "wasm32", target_feature(enable = "simd128"))]
 unsafe fn dif4_2_simd(
-    a: &[u32; N], b: &[u32; N], xab: &mut [L; N], psi: &[u32; N], psis: &[u32; N],
-    w: &[u32; N], ws: &[u32; N], ic: u32, ics: u32, p: u64,
+    a: &[u32; N], b: &[u32; N], xab: &mut [L; N], psi: &[u64; N], psis: &[u64; N],
+    w: &[u64; N], ws: &[u64; N], ic: u64, ics: u64, p: u64,
 ) {
     let pv = L::splat(p);
     let p2v = L::splat(p << 1);
+    let icv = L::splat(ic);
+    let icsv = L::splat(ics);
     // First stage (half-block N/4) with the psi pre-weight folded into the load.
     let len0 = N / 4;
     let mut j = 0;
     while j < len0 {
         let e = j; // step = 1
-        let (t1c, t1s, t2c, t2s, t3c, t3s) = twiddles3(w, ws, e);
+        let (t1c, t1s, t2c, t2s, t3c, t3s) = twiddles3_splat(w, ws, e);
         let pw = |idx: usize| -> L {
             let v = L::new(*a.get_unchecked(idx) as u64, *b.get_unchecked(idx) as u64);
-            shoup_lazy_l(v, *psi.get_unchecked(idx), *psis.get_unchecked(idx), pv)
+            shoup_lazy_lv(v, L::splat(*psi.get_unchecked(idx)), L::splat(*psis.get_unchecked(idx)), pv)
         };
         let (y0, y1, y2, y3) = r4_lazy_l(
-            pw(j), pw(j + len0), pw(j + 2 * len0), pw(j + 3 * len0), pv, p2v, ic, ics,
+            pw(j), pw(j + len0), pw(j + 2 * len0), pw(j + 3 * len0), pv, p2v, icv, icsv,
             e == 0, t1c, t1s, t2c, t2s, t3c, t3s,
         );
         *xab.get_unchecked_mut(j) = y0;
@@ -517,14 +512,14 @@ unsafe fn dif4_2_simd(
             let mut e = 0usize;
             let mut jj = 0;
             while jj < len {
-                let (t1c, t1s, t2c, t2s, t3c, t3s) = twiddles3(w, ws, e);
+                let (t1c, t1s, t2c, t2s, t3c, t3s) = twiddles3_splat(w, ws, e);
                 let base = i + jj;
                 let (y0, y1, y2, y3) = r4_lazy_l(
                     *xab.get_unchecked(base),
                     *xab.get_unchecked(base + len),
                     *xab.get_unchecked(base + 2 * len),
                     *xab.get_unchecked(base + 3 * len),
-                    pv, p2v, ic, ics, e == 0, t1c, t1s, t2c, t2s, t3c, t3s,
+                    pv, p2v, icv, icsv, e == 0, t1c, t1s, t2c, t2s, t3c, t3s,
                 );
                 *xab.get_unchecked_mut(base) = y0;
                 *xab.get_unchecked_mut(base + len) = y1;
@@ -542,13 +537,13 @@ unsafe fn dif4_2_simd(
 // ---- Contiguous 16-element tile sub-stages (used by the fused boundary pass) ----
 
 #[inline(always)]
-unsafe fn dif_l4_v(t: &mut [L; 16], w: &[u32; N], ws: &[u32; N], ic: u32, ics: u32, pv: L, p2v: L) {
+unsafe fn dif_l4_v(t: &mut [L; 16], w: &[u64; N], ws: &[u64; N], icv: L, icsv: L, pv: L, p2v: L) {
     for g in 0..4 {
         let e = 64 * g;
-        let (t1c, t1s, t2c, t2s, t3c, t3s) = twiddles3(w, ws, e);
+        let (t1c, t1s, t2c, t2s, t3c, t3s) = twiddles3_splat(w, ws, e);
         let (y0, y1, y2, y3) = r4_lazy_l(
             *t.get_unchecked(g), *t.get_unchecked(g + 4), *t.get_unchecked(g + 8),
-            *t.get_unchecked(g + 12), pv, p2v, ic, ics, e == 0, t1c, t1s, t2c, t2s, t3c, t3s,
+            *t.get_unchecked(g + 12), pv, p2v, icv, icsv, e == 0, t1c, t1s, t2c, t2s, t3c, t3s,
         );
         *t.get_unchecked_mut(g) = y0;
         *t.get_unchecked_mut(g + 4) = y1;
@@ -558,12 +553,13 @@ unsafe fn dif_l4_v(t: &mut [L; 16], w: &[u32; N], ws: &[u32; N], ic: u32, ics: u
 }
 
 #[inline(always)]
-unsafe fn dif_l1_v(t: &mut [L; 16], ic: u32, ics: u32, pv: L, p2v: L) {
+unsafe fn dif_l1_v(t: &mut [L; 16], icv: L, icsv: L, pv: L, p2v: L) {
+    let z = icv; // trivial-twiddle path ignores the stage twiddles
     for h in 0..4 {
         let b4 = 4 * h;
         let (y0, y1, y2, y3) = r4_lazy_l(
             *t.get_unchecked(b4), *t.get_unchecked(b4 + 1), *t.get_unchecked(b4 + 2),
-            *t.get_unchecked(b4 + 3), pv, p2v, ic, ics, true, 0, 0, 0, 0, 0, 0,
+            *t.get_unchecked(b4 + 3), pv, p2v, icv, icsv, true, z, z, z, z, z, z,
         );
         *t.get_unchecked_mut(b4) = y0;
         *t.get_unchecked_mut(b4 + 1) = y1;
@@ -705,7 +701,8 @@ unsafe fn boundary_simd(xab: &[L; N], out: &mut [u64; N], t: &PrimeTables) {
     let p2 = p << 1;
     let pv = L::splat(p);
     let p2v = L::splat(p2);
-    let (icf, icfs) = (t.w[N / 4], t.ws[N / 4]); // forward 4th root I
+    let icfv = L::splat(t.w[N / 4]); // forward 4th root I (broadcast)
+    let icfsv = L::splat(t.ws[N / 4]);
     let (jc, jcs) = (t.iw[N / 4], t.iws[N / 4]); // inverse 4th root J
     let jcv = L::splat(jc as u64);
     let jcsv = L::splat(jcs as u64);
@@ -717,8 +714,8 @@ unsafe fn boundary_simd(xab: &[L; N], out: &mut [u64; N], t: &PrimeTables) {
         for k in 0..16 {
             *ta.get_unchecked_mut(k) = *xab.get_unchecked(i + k);
         }
-        dif_l4_v(&mut ta, &t.w, &t.ws, icf, icfs, pv, p2v);
-        dif_l1_v(&mut ta, icf, icfs, pv, p2v);
+        dif_l4_v(&mut ta, &t.w, &t.ws, icfv, icfsv, pv, p2v);
+        dif_l1_v(&mut ta, icfv, icfsv, pv, p2v);
         // Pointwise: a*b per position. Deinterleave the packed (a,b) lanes of two
         // adjacent positions into an a-vector and a b-vector, then one vector
         // Montgomery product yields both products contiguously.
