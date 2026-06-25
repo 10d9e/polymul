@@ -654,25 +654,28 @@ fn plantard_s(x: u64, bp: u64, p: u64) -> u64 {
     (h.wrapping_add((1u64 << 32) + 1).wrapping_mul(p)) >> 32
 }
 
-/// First inverse sub-stage (trivial twiddles) specialized for inputs already in
-/// [0,2p) (the Montgomery pointwise output), so the per-input reductions are skipped.
+/// First inverse sub-stage (trivial twiddles) on the [0,2p) Montgomery pointwise
+/// output. The sums stay lazy in [0,4p): the outputs (in [0,8p)) are consumed by the
+/// next sub-stage (`dit_l4_v`), whose `a` reduction and Plantards both tolerate [0,8p),
+/// so no per-input reductions are needed here.
 #[inline(always)]
 unsafe fn dit_l1_in2p(t: &mut [u64; 16], jcp: u64, p: u64, p2: u64) {
+    let p4 = p2 << 1;
     for h in 0..4 {
         let b4 = 4 * h;
         let a = *t.get_unchecked(b4);
         let b = *t.get_unchecked(b4 + 1);
         let c = *t.get_unchecked(b4 + 2);
         let d = *t.get_unchecked(b4 + 3);
-        let s0 = red2p(a + c, p);
-        let s1 = red2p(a + p2 - c, p);
-        let s2 = red2p(b + d, p);
-        let s3 = b + p2 - d;
+        let s0 = a + c; // [0,4p)
+        let s1 = a + p2 - c; // [0,4p)
+        let s2 = b + d; // [0,4p)
+        let s3 = b + p2 - d; // [0,4p)
         let js3 = plantard_s(s3, jcp, p);
-        *t.get_unchecked_mut(b4) = s0 + s2;
-        *t.get_unchecked_mut(b4 + 1) = s1 + js3;
-        *t.get_unchecked_mut(b4 + 2) = s0 + p2 - s2;
-        *t.get_unchecked_mut(b4 + 3) = s1 + p2 - js3;
+        *t.get_unchecked_mut(b4) = s0 + s2; // [0,8p)
+        *t.get_unchecked_mut(b4 + 1) = s1 + js3; // [0,6p)
+        *t.get_unchecked_mut(b4 + 2) = s0 + p4 - s2; // (0,8p)
+        *t.get_unchecked_mut(b4 + 3) = s1 + p2 - js3; // (0,6p)
     }
 }
 
