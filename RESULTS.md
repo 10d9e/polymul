@@ -3,7 +3,7 @@
 Leaderboard of recorded submissions. Full narratives live in
 [`history/entries/`](history/entries/).
 
-**Current record: 11574416** (@10d9e, entry 0047)
+**Current record: 11519216** (@10d9e, entry 0048)
 
 | # | date | author | SCORE | Δ vs record | commit | entry | note |
 |---|------|--------|-------|-------------|--------|-------|------|
@@ -54,3 +54,4 @@ Leaderboard of recorded submissions. Full narratives live in
 | 0045 | 2026-06-25 | @10d9e | 12139952 | -555504 (new record) | `00bc58c` | [0045](history/entries/0045--10d9e.md) | Eliminate the per-butterfly splat in the forward NTT. The forward pairs operands… |
 | 0046 | 2026-06-25 | @10d9e | 11808080 | -331872 (new record) | `3311f46` | [0046](history/entries/0046--10d9e.md) | Mirror the forward u64-table change on the inverse. The inverse pairs adjacent b… |
 | 0047 | 2026-06-25 | @10d9e | 11574416 | -233664 (new record) | `d036a69` | [0047](history/entries/0047--10d9e.md) | Smaller 27-bit primes unlock lazy reduction removal in the forward NTT Replace t… |
+| 0048 | 2026-06-25 | @10d9e | 11519216 | -55200 (new record) | `fbf3261` | [0048](history/entries/0048--10d9e.md) | Drop internal reductions in the final inverse DIT stage The final inverse DIT st… |
