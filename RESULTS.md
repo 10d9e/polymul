@@ -3,7 +3,7 @@
 Leaderboard of recorded submissions. Full narratives live in
 [`history/entries/`](history/entries/).
 
-**Current record: 16335488** (@10d9e, entry 0040)
+**Current record: 14113408** (@10d9e, entry 0041)
 
 | # | date | author | SCORE | Δ vs record | commit | entry | note |
 |---|------|--------|-------|-------------|--------|-------|------|
@@ -47,3 +47,4 @@ Leaderboard of recorded submissions. Full narratives live in
 | 0038 | 2026-06-25 | @10d9e | 21386528 | -463920 (new record) | `547725c` | [0038](history/entries/0038--10d9e.md) | Fuse the forward/inverse boundary: last fwd + pointwise + first inv in registers… |
 | 0039 | 2026-06-25 | @10d9e | 21091616 | -294912 (new record) | `ea2abb4` | [0039](history/entries/0039--10d9e.md) | Lazy Montgomery pointwise + skip redundant reductions in the first inverse sub-s… |
 | 0040 | 2026-06-25 | @10d9e | 16335488 | -4756128 (new record) | `9c10612` | [0040](history/entries/0040--10d9e.md) | The forward NTT multiplies BOTH operands a and b by the SAME twiddle factors in … |
+| 0041 | 2026-06-25 | @10d9e | 14113408 | -2222080 (new record) | `4b974da` | [0041](history/entries/0041--10d9e.md) | Vectorize the inverse DIT transform the same way the forward already is, but pai… |
