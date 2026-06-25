@@ -652,13 +652,14 @@ pub fn poly_mul(plan: &mut Plan, a: &[u32; 1024], b: &[u32; 1024]) -> [u32; 1024
     unsafe {
         for j in 0..N {
             let v0 = *r0.get_unchecked(j); // < P0 < P1
-            // v1 = (r1 - v0) * inv(P0) mod P1, division-free via Shoup.
-            let t1 = red(*r1.get_unchecked(j) + p1 - v0, p1);
+            // v1 = (r1 - v0) * inv(P0) mod P1. Shoup tolerates any input < 2^32, so
+            // t1 (< 2*P1) and v1 (< P1, used mod P2) need no pre-reduction.
+            let t1 = *r1.get_unchecked(j) + p1 - v0; // [0, 2*P1)
             let v1 = shoup(t1, inv01, inv01_s, p1);
-            // w = (v0 + P0*v1) mod P2; v2 = (r2 - w) * inv(P0*P1) mod P2.
-            let term = shoup(red(v1, p2), p0_mod_p2, p0_mod_p2_s, p2);
-            let w = red(red(v0, p2) + term, p2);
-            let t2 = red(*r2.get_unchecked(j) + p2 - w, p2);
+            // w = (v0 + P0*v1) mod P2 kept lazy in [0, 3*P2); v2 = (r2 - w) * inv(P0*P1).
+            let term = shoup(v1, p0_mod_p2, p0_mod_p2_s, p2); // (P0 mod P2)*v1 mod P2
+            let w = v0 + term; // < P0 + P2 < 3*P2
+            let t2 = *r2.get_unchecked(j) + 3 * p2 - w; // (0, 4*P2)
             let v2 = shoup(t2, inv_m01, inv_m01_s, p2);
 
             // u = v0 + P0*v1 + P0*P1*v2 ; need u mod 2^32 and sign of (u - P/2).
