@@ -52,19 +52,14 @@ const GEN: u64 = 3; // primitive root for all three primes
 /// constant `c' = floor(c * 2^32 / p)` so that `c * x mod p` needs no division.
 struct PrimeTables {
     p: u64,
-    // Forward tables are stored as u64 so the constant broadcast in each butterfly
-    // compiles to a single `v128.load64_splat` (load + splat fused), since the
-    // forward pairs operand a/b in the two lanes and multiplies both by the SAME
-    // twiddle. The inverse pairs adjacent butterflies (different twiddle per lane)
-    // so its tables stay u32 and are loaded as lane pairs.
-    psi: [u64; N],   // psi^j               (negacyclic pre-weight)
-    psis: [u64; N],  //   "  Shoup constant
-    ipsi: [u64; N],  // psi^{-j} * N^{-1}    (post-weight, folds inverse scale)
-    ipsis: [u64; N], //   "  Shoup constant
-    w: [u64; N],     // w^e   forward twiddle powers (w = psi^2, a primitive N-th root)
-    ws: [u64; N],    //   "  Shoup constant
-    iw: [u64; N],    // w^{-e} inverse twiddle powers (loaded as lane pairs)
-    iws: [u64; N],   //   "  Shoup constant
+    // Each constant modular multiply uses Plantard's method: one precomputed u64
+    // `bprime = (c * (-2^64 mod p) mod p) * p^{-1} mod 2^64` per multiplier `c`, so a
+    // butterfly twiddle is a SINGLE u64 (no separate Shoup constant). The forward
+    // broadcasts it (one `v128.load64_splat`); the inverse loads adjacent pairs.
+    psip: [u64; N],  // Plantard const for psi^j * R   (negacyclic pre-weight, Montgomery R)
+    ipsip: [u64; N], // Plantard const for psi^{-j} * N^{-1} * R^{-1} (post-weight)
+    wp: [u64; N],    // Plantard const for w^e   (forward twiddle, w = psi^2)
+    iwp: [u64; N],   // Plantard const for w^{-e} (inverse twiddle)
     pinv: u32,       // -p^{-1} mod 2^32, for the Montgomery pointwise product
 }
 
@@ -181,6 +176,12 @@ impl L {
     unsafe fn shr32(self) -> L {
         L(u64x2_shr(self.0, 32))
     }
+    /// Arithmetic (sign-extending) shift right by 32, for Plantard's signed high half.
+    #[inline]
+    #[target_feature(enable = "simd128")]
+    unsafe fn ashr32(self) -> L {
+        L(i64x2_shr(self.0, 32))
+    }
     /// Lanewise (a >= o) -> all-ones / all-zeros mask. Operands < 2^63 so signed
     /// `i64x2_ge` agrees with unsigned compare.
     #[inline]
@@ -263,6 +264,10 @@ impl L {
         L(self.0 >> 32, self.1 >> 32)
     }
     #[inline(always)]
+    unsafe fn ashr32(self) -> L {
+        L(((self.0 as i64) >> 32) as u64, ((self.1 as i64) >> 32) as u64)
+    }
+    #[inline(always)]
     unsafe fn ge(self, o: L) -> L {
         L(
             if self.0 >= o.0 { !0 } else { 0 },
@@ -321,6 +326,18 @@ unsafe fn shoup_lazy_lv(x: L, cv: L, csv: L, pv: L) -> L {
     x.mul(cv).sub(q.mul(pv))
 }
 
+/// Plantard modular multiply by a precomputed constant: `bpv` lanes hold
+/// `bprime = (c * (-2^64 mod q) mod q) * q^{-1} mod 2^64`. For any non-negative input
+/// `x < 8q` this returns `x*c mod q` represented in [0,2q) — a drop-in replacement for
+/// `shoup_lazy_lv` using only TWO multiplies (vs Shoup's three) and ONE constant load
+/// (vs two). `caddv = splat(2^32 + 1)` folds in both Plantard's rounding `+1` and the
+/// `+q` that shifts the centred result into [0,2q); `qv = splat(q)`.
+#[inline(always)]
+unsafe fn plantard_lv(x: L, bpv: L, qv: L, caddv: L) -> L {
+    let h = x.mul(bpv).ashr32(); // high 32 of x*bprime (signed)
+    h.add(caddv).mul(qv).shr32() // ((h + 2^32 + 1) * q) >> 32  in [0,2q)
+}
+
 /// Lanewise reduce [0,2p) -> [0,p).
 #[inline(always)]
 unsafe fn redp_l(a: L, pv: L) -> L {
@@ -329,21 +346,13 @@ unsafe fn redp_l(a: L, pv: L) -> L {
     L::select(m, t, a)
 }
 
-/// Build the three radix-4 stage twiddle vectors (and their Shoup constants) for a
-/// pair of adjacent butterflies with exponents `e0` and `e1`. Each returned `L`
-/// holds the constant for lane 0 (e0) and lane 1 (e1).
+/// Build the three radix-4 stage Plantard twiddle constants (w^e, w^{2e}, w^{3e}) for
+/// a pair of adjacent butterflies with exponents `e0` and `e1`. Each returned `L` holds
+/// the constant for lane 0 (e0) and lane 1 (e1).
 #[inline(always)]
-unsafe fn twiddles3_l(
-    w: &[u64; N], ws: &[u64; N], e0: usize, e1: usize,
-) -> (L, L, L, L, L, L) {
-    let g = |t: &[u64; N], a: usize, b: usize| {
-        L::new(*t.get_unchecked(a), *t.get_unchecked(b))
-    };
-    (
-        g(w, e0, e1), g(ws, e0, e1),
-        g(w, 2 * e0, 2 * e1), g(ws, 2 * e0, 2 * e1),
-        g(w, 3 * e0, 3 * e1), g(ws, 3 * e0, 3 * e1),
-    )
+unsafe fn twiddles3_l(iwp: &[u64; N], e0: usize, e1: usize) -> (L, L, L) {
+    let g = |a: usize, b: usize| L::new(*iwp.get_unchecked(a), *iwp.get_unchecked(b));
+    (g(e0, e1), g(2 * e0, 2 * e1), g(3 * e0, 3 * e1))
 }
 
 /// Vectorized inverse radix-4 DIT butterfly (two adjacent butterflies in the two
@@ -355,18 +364,18 @@ unsafe fn twiddles3_l(
 #[allow(clippy::too_many_arguments)]
 #[inline(always)]
 unsafe fn r4_lazy_dit_l(
-    a: L, b: L, c: L, d: L, pv: L, p2v: L, jcv: L, jcsv: L,
-    t1c: L, t1s: L, t2c: L, t2s: L, t3c: L, t3s: L,
+    a: L, b: L, c: L, d: L, pv: L, p2v: L, cav: L, jcp: L,
+    t1p: L, t2p: L, t3p: L,
 ) -> (L, L, L, L) {
     let a = red2p_l(a, p2v); // [0,4p) -> [0,2p)
-    let b = shoup_lazy_lv(b, t1c, t1s, pv);
-    let c = shoup_lazy_lv(c, t2c, t2s, pv);
-    let d = shoup_lazy_lv(d, t3c, t3s, pv);
+    let b = plantard_lv(b, t1p, pv, cav);
+    let c = plantard_lv(c, t2p, pv, cav);
+    let d = plantard_lv(d, t3p, pv, cav);
     let s0 = red2p_l(a.add(c), p2v);
     let s1 = red2p_l(a.add(p2v).sub(c), p2v);
     let s2 = red2p_l(b.add(d), p2v);
-    let s3 = b.add(p2v).sub(d); // [0,4p); feeds only the lazy Shoup
-    let js3 = shoup_lazy_lv(s3, jcv, jcsv, pv);
+    let s3 = b.add(p2v).sub(d); // [0,4p); feeds only the lazy Plantard
+    let js3 = plantard_lv(s3, jcp, pv, cav);
     (s0.add(s2), s1.add(js3), s0.add(p2v).sub(s2), s1.add(p2v).sub(js3))
 }
 
@@ -378,18 +387,18 @@ unsafe fn r4_lazy_dit_l(
 #[allow(clippy::too_many_arguments)]
 #[inline(always)]
 unsafe fn r4_lazy_dit_l_final(
-    a: L, b: L, c: L, d: L, pv: L, p2v: L, p4v: L, jcv: L, jcsv: L,
-    t1c: L, t1s: L, t2c: L, t2s: L, t3c: L, t3s: L,
+    a: L, b: L, c: L, d: L, pv: L, p2v: L, p4v: L, cav: L, jcp: L,
+    t1p: L, t2p: L, t3p: L,
 ) -> (L, L, L, L) {
     let a = red2p_l(a, p2v); // [0,4p) -> [0,2p)
-    let b = shoup_lazy_lv(b, t1c, t1s, pv);
-    let c = shoup_lazy_lv(c, t2c, t2s, pv);
-    let d = shoup_lazy_lv(d, t3c, t3s, pv);
+    let b = plantard_lv(b, t1p, pv, cav);
+    let c = plantard_lv(c, t2p, pv, cav);
+    let d = plantard_lv(d, t3p, pv, cav);
     let s0 = a.add(c); // [0,4p)
     let s1 = a.add(p2v).sub(c); // [0,4p)
     let s2 = b.add(d); // [0,4p)
     let s3 = b.add(p2v).sub(d); // [0,4p)
-    let js3 = shoup_lazy_lv(s3, jcv, jcsv, pv);
+    let js3 = plantard_lv(s3, jcp, pv, cav);
     // out2 subtracts s2 (< 4p) so it needs a 4p bias; out3 subtracts js3 (< 2p).
     (s0.add(s2), s1.add(js3), s0.add(p4v).sub(s2), s1.add(p2v).sub(js3))
 }
@@ -412,14 +421,10 @@ fn build_tables(p: u64) -> PrimeTables {
 
     let mut pt = PrimeTables {
         p,
-        psi: [0; N],
-        psis: [0; N],
-        ipsi: [0; N],
-        ipsis: [0; N],
-        w: [0; N],
-        ws: [0; N],
-        iw: [0; N],
-        iws: [0; N],
+        psip: [0; N],
+        ipsip: [0; N],
+        wp: [0; N],
+        iwp: [0; N],
         pinv: inv.wrapping_neg(),
     };
 
@@ -427,12 +432,10 @@ fn build_tables(p: u64) -> PrimeTables {
     let mut iacc = 1u64; // psi^{-j}
     for j in 0..N {
         let pm = (acc as u128 * r_mod as u128 % p as u128) as u64; // psi^j * R  (Montgomery)
-        pt.psi[j] = pm;
-        pt.psis[j] = shoup_const(pm, p) as u64;
+        pt.psip[j] = plantard_const(pm, p);
         let ip = (iacc as u128 * ninv as u128 % p as u128) as u64; // psi^{-j} * N^{-1}
         let ipm = (ip as u128 * rinv as u128 % p as u128) as u64; //   * R^{-1} (de-Montgomery)
-        pt.ipsi[j] = ipm;
-        pt.ipsis[j] = shoup_const(ipm, p) as u64;
+        pt.ipsip[j] = plantard_const(ipm, p);
         acc = (acc as u128 * psi_root as u128 % p as u128) as u64;
         iacc = (iacc as u128 * psi_inv as u128 % p as u128) as u64;
     }
@@ -440,26 +443,45 @@ fn build_tables(p: u64) -> PrimeTables {
     let mut wacc = 1u64; // w^e
     let mut iwacc = 1u64; // w^{-e}
     for e in 0..N {
-        pt.w[e] = wacc;
-        pt.ws[e] = shoup_const(wacc, p) as u64;
-        pt.iw[e] = iwacc;
-        pt.iws[e] = shoup_const(iwacc, p) as u64;
+        pt.wp[e] = plantard_const(wacc, p);
+        pt.iwp[e] = plantard_const(iwacc, p);
         wacc = (wacc as u128 * w_root as u128 % p as u128) as u64;
         iwacc = (iwacc as u128 * w_inv as u128 % p as u128) as u64;
     }
     pt
 }
 
-/// Forward stage twiddles (w^e, w^{2e}, w^{3e} and their Shoup constants), each
-/// broadcast to both lanes. The forward pairs operands a/b, which share the twiddle,
-/// so from a u64 table `L::splat(*ptr)` lowers to a single `v128.load64_splat` — the
-/// load and broadcast fuse into one instruction, with no separate splat op.
+/// q^{-1} mod 2^64 via Newton's iteration (q odd). 1 -> 2 -> ... -> 64 correct bits.
 #[inline(always)]
-unsafe fn twiddles3_splat(w: &[u64; N], ws: &[u64; N], e: usize) -> (L, L, L, L, L, L) {
+fn inv_2_64(q: u64) -> u64 {
+    let mut x = 1u64;
+    for _ in 0..6 {
+        x = x.wrapping_mul(2u64.wrapping_sub(q.wrapping_mul(x)));
+    }
+    x
+}
+
+/// Plantard constant for multiplying by `c` modulo `p`: `(c * (-2^64 mod p) mod p) *
+/// p^{-1} mod 2^64`. With it, `plantard_lv(x, .)` returns `x*c mod p` in [0,2p) for any
+/// non-negative `x < 8p`, in two multiplies (see `plantard_lv`).
+#[inline(always)]
+fn plantard_const(c: u64, p: u64) -> u64 {
+    let r2 = ((1u128 << 64) % p as u128) as u64; // 2^64 mod p
+    let neg_r2 = (p - r2) % p; // -2^64 mod p
+    let beff = (c as u128 * neg_r2 as u128 % p as u128) as u64;
+    (beff as u128 * inv_2_64(p) as u128 & ((1u128 << 64) - 1)) as u64
+}
+
+/// Forward stage Plantard twiddle constants (w^e, w^{2e}, w^{3e}), each broadcast to
+/// both lanes. The forward pairs operands a/b, which share the twiddle, so from a u64
+/// table `L::splat(*ptr)` lowers to a single `v128.load64_splat` — the load and
+/// broadcast fuse into one instruction, with no separate splat op.
+#[inline(always)]
+unsafe fn twiddles3_splat(wp: &[u64; N], e: usize) -> (L, L, L) {
     (
-        L::splat(*w.get_unchecked(e)), L::splat(*ws.get_unchecked(e)),
-        L::splat(*w.get_unchecked(2 * e)), L::splat(*ws.get_unchecked(2 * e)),
-        L::splat(*w.get_unchecked(3 * e)), L::splat(*ws.get_unchecked(3 * e)),
+        L::splat(*wp.get_unchecked(e)),
+        L::splat(*wp.get_unchecked(2 * e)),
+        L::splat(*wp.get_unchecked(3 * e)),
     )
 }
 
@@ -470,17 +492,17 @@ unsafe fn twiddles3_splat(w: &[u64; N], ws: &[u64; N], e: usize) -> (L, L, L, L,
 #[allow(clippy::too_many_arguments)]
 #[inline(always)]
 unsafe fn r4_lazy_l(
-    a: L, b: L, c: L, d: L, pv: L, p2v: L, icv: L, icsv: L, triv: bool,
-    t1c: L, t1s: L, t2c: L, t2s: L, t3c: L, t3s: L,
+    a: L, b: L, c: L, d: L, pv: L, p2v: L, cav: L, icp: L, triv: bool,
+    t1p: L, t2p: L, t3p: L,
 ) -> (L, L, L, L) {
     let s0 = red2p_l(a.add(c), p2v);
     let s2 = red2p_l(b.add(d), p2v);
-    // s1 feeds only Shoup multiplies (non-triv) which tolerate any value < 2^32, so
-    // it stays lazy in [0,4p); the small primes keep y1,y3 (< 6p) well under 2^32.
-    // The triv path red2p's the outputs, so it needs the reduced [0,2p) form.
+    // s1 feeds only Plantard multiplies (non-triv) which tolerate any non-negative
+    // value < 8p, so it stays lazy in [0,4p). The triv path red2p's the outputs, so it
+    // needs the reduced [0,2p) form.
     let s1 = if triv { red2p_l(a.add(p2v).sub(c), p2v) } else { a.add(p2v).sub(c) };
-    let s3 = b.add(p2v).sub(d); // in [0,4p); feeds only the lazy Shoup
-    let is3 = shoup_lazy_lv(s3, icv, icsv, pv);
+    let s3 = b.add(p2v).sub(d); // in [0,4p); feeds only the lazy Plantard
+    let is3 = plantard_lv(s3, icp, pv, cav);
     let y0 = red2p_l(s0.add(s2), p2v);
     let y2 = s0.add(p2v).sub(s2);
     let y1 = s1.add(is3);
@@ -490,9 +512,9 @@ unsafe fn r4_lazy_l(
     } else {
         (
             y0,
-            shoup_lazy_lv(y1, t1c, t1s, pv),
-            shoup_lazy_lv(y2, t2c, t2s, pv),
-            shoup_lazy_lv(y3, t3c, t3s, pv),
+            plantard_lv(y1, t1p, pv, cav),
+            plantard_lv(y2, t2p, pv, cav),
+            plantard_lv(y3, t3p, pv, cav),
         )
     }
 }
@@ -503,26 +525,26 @@ unsafe fn r4_lazy_l(
 #[allow(clippy::too_many_arguments)]
 #[cfg_attr(target_arch = "wasm32", target_feature(enable = "simd128"))]
 unsafe fn dif4_2_simd(
-    a: &[u32; N], b: &[u32; N], xab: &mut [L; N], psi: &[u64; N], psis: &[u64; N],
-    w: &[u64; N], ws: &[u64; N], ic: u64, ics: u64, p: u64,
+    a: &[u32; N], b: &[u32; N], xab: &mut [L; N], psip: &[u64; N],
+    wp: &[u64; N], icp: u64, p: u64,
 ) {
     let pv = L::splat(p);
     let p2v = L::splat(p << 1);
-    let icv = L::splat(ic);
-    let icsv = L::splat(ics);
+    let cav = L::splat((1u64 << 32) + 1);
+    let icpv = L::splat(icp);
     // First stage (half-block N/4) with the psi pre-weight folded into the load.
     let len0 = N / 4;
     let mut j = 0;
     while j < len0 {
         let e = j; // step = 1
-        let (t1c, t1s, t2c, t2s, t3c, t3s) = twiddles3_splat(w, ws, e);
+        let (t1p, t2p, t3p) = twiddles3_splat(wp, e);
         let pw = |idx: usize| -> L {
             let v = L::new(*a.get_unchecked(idx) as u64, *b.get_unchecked(idx) as u64);
-            shoup_lazy_lv(v, L::splat(*psi.get_unchecked(idx)), L::splat(*psis.get_unchecked(idx)), pv)
+            plantard_lv(v, L::splat(*psip.get_unchecked(idx)), pv, cav)
         };
         let (y0, y1, y2, y3) = r4_lazy_l(
-            pw(j), pw(j + len0), pw(j + 2 * len0), pw(j + 3 * len0), pv, p2v, icv, icsv,
-            e == 0, t1c, t1s, t2c, t2s, t3c, t3s,
+            pw(j), pw(j + len0), pw(j + 2 * len0), pw(j + 3 * len0), pv, p2v, cav, icpv,
+            e == 0, t1p, t2p, t3p,
         );
         *xab.get_unchecked_mut(j) = y0;
         *xab.get_unchecked_mut(j + len0) = y1;
@@ -540,7 +562,7 @@ unsafe fn dif4_2_simd(
         let mut e = 0usize;
         let mut jj = 0;
         while jj < len {
-            let (t1c, t1s, t2c, t2s, t3c, t3s) = twiddles3_splat(w, ws, e);
+            let (t1p, t2p, t3p) = twiddles3_splat(wp, e);
             let triv = e == 0;
             let mut i = 0;
             while i < N {
@@ -550,7 +572,7 @@ unsafe fn dif4_2_simd(
                     *xab.get_unchecked(base + len),
                     *xab.get_unchecked(base + 2 * len),
                     *xab.get_unchecked(base + 3 * len),
-                    pv, p2v, icv, icsv, triv, t1c, t1s, t2c, t2s, t3c, t3s,
+                    pv, p2v, cav, icpv, triv, t1p, t2p, t3p,
                 );
                 *xab.get_unchecked_mut(base) = y0;
                 *xab.get_unchecked_mut(base + len) = y1;
@@ -568,13 +590,13 @@ unsafe fn dif4_2_simd(
 // ---- Contiguous 16-element tile sub-stages (used by the fused boundary pass) ----
 
 #[inline(always)]
-unsafe fn dif_l4_v(t: &mut [L; 16], w: &[u64; N], ws: &[u64; N], icv: L, icsv: L, pv: L, p2v: L) {
+unsafe fn dif_l4_v(t: &mut [L; 16], wp: &[u64; N], cav: L, icpv: L, pv: L, p2v: L) {
     for g in 0..4 {
         let e = 64 * g;
-        let (t1c, t1s, t2c, t2s, t3c, t3s) = twiddles3_splat(w, ws, e);
+        let (t1p, t2p, t3p) = twiddles3_splat(wp, e);
         let (y0, y1, y2, y3) = r4_lazy_l(
             *t.get_unchecked(g), *t.get_unchecked(g + 4), *t.get_unchecked(g + 8),
-            *t.get_unchecked(g + 12), pv, p2v, icv, icsv, e == 0, t1c, t1s, t2c, t2s, t3c, t3s,
+            *t.get_unchecked(g + 12), pv, p2v, cav, icpv, e == 0, t1p, t2p, t3p,
         );
         *t.get_unchecked_mut(g) = y0;
         *t.get_unchecked_mut(g + 4) = y1;
@@ -584,7 +606,7 @@ unsafe fn dif_l4_v(t: &mut [L; 16], w: &[u64; N], ws: &[u64; N], icv: L, icsv: L
 }
 
 #[inline(always)]
-unsafe fn dif_l1_v(t: &mut [L; 16], icv: L, icsv: L, pv: L, p2v: L) {
+unsafe fn dif_l1_v(t: &mut [L; 16], cav: L, icpv: L, pv: L, p2v: L) {
     // Last forward stage (unit stage twiddles). Its outputs feed only the pointwise
     // Montgomery product, which tolerates inputs up to ~5.6p (K^2 p < 2^32 at the
     // 27-bit primes), so the four output reductions are skipped: outputs stay [0,4p).
@@ -597,8 +619,8 @@ unsafe fn dif_l1_v(t: &mut [L; 16], icv: L, icsv: L, pv: L, p2v: L) {
         let s0 = red2p_l(a.add(c), p2v);
         let s2 = red2p_l(b.add(d), p2v);
         let s1 = red2p_l(a.add(p2v).sub(c), p2v);
-        let s3 = b.add(p2v).sub(d); // [0,4p); feeds the 4th-root Shoup
-        let is3 = shoup_lazy_lv(s3, icv, icsv, pv);
+        let s3 = b.add(p2v).sub(d); // [0,4p); feeds the 4th-root Plantard
+        let is3 = plantard_lv(s3, icpv, pv, cav);
         *t.get_unchecked_mut(b4) = s0.add(s2); // [0,4p)
         *t.get_unchecked_mut(b4 + 1) = s1.add(is3); // [0,4p)
         *t.get_unchecked_mut(b4 + 2) = s0.add(p2v).sub(s2); // [0,4p)
@@ -606,17 +628,18 @@ unsafe fn dif_l1_v(t: &mut [L; 16], icv: L, icsv: L, pv: L, p2v: L) {
     }
 }
 
-/// Scalar lazy Shoup (single value), used by the inverse DIT. Result in [0,2p).
+/// Scalar Plantard multiply by a precomputed constant (single value), used by the
+/// scalar inverse first DIT sub-stage. Result in [0,2p) for any non-negative x < 8p.
 #[inline(always)]
-fn shoup_lazy(x: u64, c: u32, cs: u32, p: u64) -> u64 {
-    let q = x.wrapping_mul(cs as u64) >> 32;
-    x.wrapping_mul(c as u64).wrapping_sub(q.wrapping_mul(p))
+fn plantard_s(x: u64, bp: u64, p: u64) -> u64 {
+    let h = ((x.wrapping_mul(bp) as i64) >> 32) as u64; // signed high 32
+    (h.wrapping_add((1u64 << 32) + 1).wrapping_mul(p)) >> 32
 }
 
 /// First inverse sub-stage (trivial twiddles) specialized for inputs already in
 /// [0,2p) (the Montgomery pointwise output), so the per-input reductions are skipped.
 #[inline(always)]
-unsafe fn dit_l1_in2p(t: &mut [u64; 16], jc: u32, jcs: u32, p: u64, p2: u64) {
+unsafe fn dit_l1_in2p(t: &mut [u64; 16], jcp: u64, p: u64, p2: u64) {
     for h in 0..4 {
         let b4 = 4 * h;
         let a = *t.get_unchecked(b4);
@@ -627,7 +650,7 @@ unsafe fn dit_l1_in2p(t: &mut [u64; 16], jc: u32, jcs: u32, p: u64, p2: u64) {
         let s1 = red2p(a + p2 - c, p);
         let s2 = red2p(b + d, p);
         let s3 = b + p2 - d;
-        let js3 = shoup_lazy(s3, jc, jcs, p);
+        let js3 = plantard_s(s3, jcp, p);
         *t.get_unchecked_mut(b4) = s0 + s2;
         *t.get_unchecked_mut(b4 + 1) = s1 + js3;
         *t.get_unchecked_mut(b4 + 2) = s0 + p2 - s2;
@@ -640,17 +663,17 @@ unsafe fn dit_l1_in2p(t: &mut [u64; 16], jc: u32, jcs: u32, p: u64, p2: u64) {
 /// g+12), so a pair (g, g+1) rides the two lanes with contiguous v128 loads; the
 /// two lanes' twiddles (e=64g, 64(g+1)) are loaded as pairs.
 #[inline(always)]
-unsafe fn dit_l4_v(t: &mut [u64; 16], iw: &[u64; N], iws: &[u64; N], jcv: L, jcsv: L, pv: L, p2v: L) {
+unsafe fn dit_l4_v(t: &mut [u64; 16], iwp: &[u64; N], cav: L, jcpv: L, pv: L, p2v: L) {
     let tp = t.as_mut_ptr();
     let mut g = 0;
     while g < 4 {
-        let (t1c, t1s, t2c, t2s, t3c, t3s) = twiddles3_l(iw, iws, 64 * g, 64 * (g + 1));
+        let (t1p, t2p, t3p) = twiddles3_l(iwp, 64 * g, 64 * (g + 1));
         let a = L::load(tp.add(g));
         let b = L::load(tp.add(g + 4));
         let c = L::load(tp.add(g + 8));
         let d = L::load(tp.add(g + 12));
         let (o0, o1, o2, o3) =
-            r4_lazy_dit_l(a, b, c, d, pv, p2v, jcv, jcsv, t1c, t1s, t2c, t2s, t3c, t3s);
+            r4_lazy_dit_l(a, b, c, d, pv, p2v, cav, jcpv, t1p, t2p, t3p);
         L::store(tp.add(g), o0);
         L::store(tp.add(g + 4), o1);
         L::store(tp.add(g + 8), o2);
@@ -668,14 +691,14 @@ unsafe fn dit_l4_v(t: &mut [u64; 16], iw: &[u64; N], iws: &[u64; N], jcv: L, jcs
 #[allow(clippy::too_many_arguments)]
 #[cfg_attr(target_arch = "wasm32", target_feature(enable = "simd128"))]
 unsafe fn dit4_rest(
-    x: &mut [u64; N], iw: &[u64; N], iws: &[u64; N], jc: u64, jcs: u64,
-    ipsi: &[u64; N], ipsis: &[u64; N], p: u64,
+    x: &mut [u64; N], iwp: &[u64; N], jcp: u64,
+    ipsip: &[u64; N], p: u64,
 ) {
     let pv = L::splat(p);
     let p2v = L::splat(p << 1);
     let p4v = L::splat(p << 2);
-    let jcv = L::splat(jc);
-    let jcsv = L::splat(jcs);
+    let cav = L::splat((1u64 << 32) + 1);
+    let jcpv = L::splat(jcp);
     let xp = x.as_mut_ptr();
     // Butterfly-outer loop: the per-lane twiddles depend only on the column `j`, not
     // the block `i`, so they are loaded once and reused across the inner block loop
@@ -687,7 +710,7 @@ unsafe fn dit4_rest(
         while j < len {
             let e0 = j * step;
             let e1 = e0 + step;
-            let (t1c, t1s, t2c, t2s, t3c, t3s) = twiddles3_l(iw, iws, e0, e1);
+            let (t1p, t2p, t3p) = twiddles3_l(iwp, e0, e1);
             let mut i = 0;
             while i < N {
                 let base = i + j;
@@ -696,7 +719,7 @@ unsafe fn dit4_rest(
                 let c = L::load(xp.add(base + 2 * len));
                 let d = L::load(xp.add(base + 3 * len));
                 let (o0, o1, o2, o3) =
-                    r4_lazy_dit_l(a, b, c, d, pv, p2v, jcv, jcsv, t1c, t1s, t2c, t2s, t3c, t3s);
+                    r4_lazy_dit_l(a, b, c, d, pv, p2v, cav, jcpv, t1p, t2p, t3p);
                 L::store(xp.add(base), o0);
                 L::store(xp.add(base + len), o1);
                 L::store(xp.add(base + 2 * len), o2);
@@ -711,18 +734,17 @@ unsafe fn dit4_rest(
     // folded into the output store (no standalone post-weight pass).
     let mut j = 0usize;
     while j < N / 4 {
-        let (t1c, t1s, t2c, t2s, t3c, t3s) = twiddles3_l(iw, iws, j, j + 1);
+        let (t1p, t2p, t3p) = twiddles3_l(iwp, j, j + 1);
         let a = L::load(xp.add(j));
         let b = L::load(xp.add(j + N / 4));
         let c = L::load(xp.add(j + N / 2));
         let d = L::load(xp.add(j + 3 * N / 4));
         let (o0, o1, o2, o3) =
-            r4_lazy_dit_l_final(a, b, c, d, pv, p2v, p4v, jcv, jcsv, t1c, t1s, t2c, t2s, t3c, t3s);
-        // Post-weight (shoup with conditional subtract -> [0,p)) per lane position.
+            r4_lazy_dit_l_final(a, b, c, d, pv, p2v, p4v, cav, jcpv, t1p, t2p, t3p);
+        // Post-weight (Plantard with conditional subtract -> [0,p)) per lane position.
         let pw = |o: L, pos: usize| -> L {
-            let ipv = L::new(*ipsi.get_unchecked(pos), *ipsi.get_unchecked(pos + 1));
-            let ipsv = L::new(*ipsis.get_unchecked(pos), *ipsis.get_unchecked(pos + 1));
-            redp_l(shoup_lazy_lv(o, ipv, ipsv, pv), pv)
+            let ipv = L::new(*ipsip.get_unchecked(pos), *ipsip.get_unchecked(pos + 1));
+            redp_l(plantard_lv(o, ipv, pv, cav), pv)
         };
         L::store(xp.add(j), pw(o0, j));
         L::store(xp.add(j + N / 4), pw(o1, j + N / 4));
@@ -743,11 +765,10 @@ unsafe fn boundary_simd(xab: &[L; N], out: &mut [u64; N], t: &PrimeTables) {
     let p2 = p << 1;
     let pv = L::splat(p);
     let p2v = L::splat(p2);
-    let icfv = L::splat(t.w[N / 4]); // forward 4th root I (broadcast)
-    let icfsv = L::splat(t.ws[N / 4]);
-    let (jc, jcs) = (t.iw[N / 4], t.iws[N / 4]); // inverse 4th root J
-    let jcv = L::splat(jc as u64);
-    let jcsv = L::splat(jcs as u64);
+    let cav = L::splat((1u64 << 32) + 1);
+    let icfpv = L::splat(t.wp[N / 4]); // forward 4th root I, Plantard const (broadcast)
+    let jcp = t.iwp[N / 4]; // inverse 4th root J, Plantard const
+    let jcpv = L::splat(jcp);
     let pinvv = L::splat(t.pinv as u64);
     let maskv = L::splat(0xffff_ffff);
     let mut i = 0;
@@ -756,8 +777,8 @@ unsafe fn boundary_simd(xab: &[L; N], out: &mut [u64; N], t: &PrimeTables) {
         for k in 0..16 {
             *ta.get_unchecked_mut(k) = *xab.get_unchecked(i + k);
         }
-        dif_l4_v(&mut ta, &t.w, &t.ws, icfv, icfsv, pv, p2v);
-        dif_l1_v(&mut ta, icfv, icfsv, pv, p2v);
+        dif_l4_v(&mut ta, &t.wp, cav, icfpv, pv, p2v);
+        dif_l1_v(&mut ta, cav, icfpv, pv, p2v);
         // Pointwise: a*b per position. Deinterleave the packed (a,b) lanes of two
         // adjacent positions into an a-vector and a b-vector, then one vector
         // Montgomery product yields both products contiguously.
@@ -769,8 +790,8 @@ unsafe fn boundary_simd(xab: &[L; N], out: &mut [u64; N], t: &PrimeTables) {
             L::store(tcp.add(k), mont_mul_l(av, bv, pv, pinvv, maskv));
             k += 2;
         }
-        dit_l1_in2p(&mut tc, jc as u32, jcs as u32, p, p2);
-        dit_l4_v(&mut tc, &t.iw, &t.iws, jcv, jcsv, pv, p2v);
+        dit_l1_in2p(&mut tc, jcp, p, p2);
+        dit_l4_v(&mut tc, &t.iwp, cav, jcpv, pv, p2v);
         for k in 0..16 {
             *out.get_unchecked_mut(i + k) = *tc.get_unchecked(k);
         }
@@ -782,7 +803,7 @@ fn convolve_mod(t: &PrimeTables, a: &[u32; N], b: &[u32; N]) -> [u64; N] {
     let mut x = [0u64; N];
     unsafe {
         fwd_boundary(t, a, b, &mut x); // forward (SIMD a/b) + pointwise + first inv stages
-        dit4_rest(&mut x, &t.iw, &t.iws, t.iw[N / 4], t.iws[N / 4], &t.ipsi, &t.ipsis, t.p); // rest of inverse (SIMD)
+        dit4_rest(&mut x, &t.iwp, t.iwp[N / 4], &t.ipsip, t.p); // rest of inverse (SIMD)
     }
     x
 }
@@ -791,7 +812,7 @@ fn convolve_mod(t: &PrimeTables, a: &[u32; N], b: &[u32; N]) -> [u64; N] {
 #[cfg_attr(target_arch = "wasm32", target_feature(enable = "simd128"))]
 unsafe fn fwd_boundary(t: &PrimeTables, a: &[u32; N], b: &[u32; N], out: &mut [u64; N]) {
     let mut xab = [L::splat(0); N];
-    dif4_2_simd(a, b, &mut xab, &t.psi, &t.psis, &t.w, &t.ws, t.w[N / 4], t.ws[N / 4], t.p);
+    dif4_2_simd(a, b, &mut xab, &t.psip, &t.wp, t.wp[N / 4], t.p);
     boundary_simd(&xab, out, t);
 }
 
