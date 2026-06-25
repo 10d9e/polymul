@@ -23,10 +23,16 @@
 // one extra multiply + shift to get the quotient, then a single conditional
 // subtraction — instead of a hardware `%`. Under a cost model where integer
 // division is ~25x an add (as on real hardware), this is far cheaper than the
-// `%`-reduction the NTT is usually written with. Sums are kept reduced in [0,p)
-// with a conditional subtract rather than deferred, since a conditional subtract
-// is ~2 ops versus a division's 25. Only the spectral pointwise product (both
-// operands variable) and the per-input coefficient reduction use `%`.
+// `%`-reduction the NTT is usually written with.
+//
+// SIMD: the forward transform multiplies BOTH operands (a and b) by the same
+// twiddles in lockstep, so a and b are packed into the two lanes of an i64x2
+// vector and the whole forward NTT runs with v128 arithmetic — one SIMD multiply
+// (charged like a scalar multiply) does both operands' modular products at once.
+// The lane abstraction `L` has a real-`v128` implementation on wasm (where the
+// metric runs) and a scalar two-`u64` fallback elsewhere (where correctness is
+// checked); both compute bit-identical results, so the native correctness gate
+// validates the exact algorithm the wasm build meters.
 //
 // Forward transform is decimation-in-frequency (natural -> bit-reversed) and the
 // inverse is decimation-in-time (bit-reversed -> natural), so no explicit
@@ -112,16 +118,6 @@ fn shoup(x: u64, c: u32, cs: u32, p: u64) -> u64 {
     }
 }
 
-/// Lazy Shoup: `x * c (mod p)` left in [0, 2p) — no final conditional subtract.
-/// Valid (result in [0,2p)) for ANY x < 2^32, because with the 2^32 Shoup constant
-/// the quotient error is at most 1 (Harvey's trick). Since the butterflies keep
-/// values in [0, 4p) < 2^32, inputs are always in range.
-#[inline(always)]
-fn shoup_lazy(x: u64, c: u32, cs: u32, p: u64) -> u64 {
-    let q = x.wrapping_mul(cs as u64) >> 32;
-    x.wrapping_mul(c as u64).wrapping_sub(q.wrapping_mul(p))
-}
-
 /// Reduce a value in [0, 4p) into [0, 2p).
 #[inline(always)]
 fn red2p(a: u64, p: u64) -> u64 {
@@ -141,6 +137,151 @@ fn mont_mul(a: u64, b: u64, p: u64, pinv: u32) -> u64 {
     let t = a * b;
     let m = (t as u32).wrapping_mul(pinv) as u64; // (t mod R) * (-p^{-1}) mod R
     (t + m * p) >> 32 // exact /R, result in [0,2p)
+}
+
+// ---------------------------------------------------------------------------
+// Two-lane vector abstraction `L`. Lane 0 carries operand `a`, lane 1 carries
+// operand `b`; the forward NTT runs both in lockstep. On wasm it is a real
+// `v128` (i64x2); elsewhere a scalar pair, so the native correctness gate runs
+// the identical algorithm. Every method is `unsafe fn` so the (target-feature)
+// wasm impl and the scalar impl share one call site; the wasm forward functions
+// carry `#[target_feature(enable = "simd128")]` via `cfg_attr`.
+// ---------------------------------------------------------------------------
+
+#[cfg(target_arch = "wasm32")]
+use core::arch::wasm32::*;
+
+#[cfg(target_arch = "wasm32")]
+#[derive(Clone, Copy)]
+struct L(v128);
+
+#[cfg(target_arch = "wasm32")]
+impl L {
+    #[inline]
+    #[target_feature(enable = "simd128")]
+    unsafe fn splat(x: u64) -> L {
+        L(u64x2_splat(x))
+    }
+    #[inline]
+    #[target_feature(enable = "simd128")]
+    unsafe fn new(a: u64, b: u64) -> L {
+        L(u64x2(a, b))
+    }
+    #[inline]
+    #[target_feature(enable = "simd128")]
+    unsafe fn add(self, o: L) -> L {
+        L(i64x2_add(self.0, o.0))
+    }
+    #[inline]
+    #[target_feature(enable = "simd128")]
+    unsafe fn sub(self, o: L) -> L {
+        L(i64x2_sub(self.0, o.0))
+    }
+    #[inline]
+    #[target_feature(enable = "simd128")]
+    unsafe fn mul(self, o: L) -> L {
+        L(i64x2_mul(self.0, o.0)) // low 64 bits per lane (exact for our < 2^64 products)
+    }
+    #[inline]
+    #[target_feature(enable = "simd128")]
+    unsafe fn shr32(self) -> L {
+        L(u64x2_shr(self.0, 32))
+    }
+    /// Lanewise (a >= o) -> all-ones / all-zeros mask. Operands < 2^63 so signed
+    /// `i64x2_ge` agrees with unsigned compare.
+    #[inline]
+    #[target_feature(enable = "simd128")]
+    unsafe fn ge(self, o: L) -> L {
+        L(i64x2_ge(self.0, o.0))
+    }
+    /// Lanewise mask ? t : f (mask all-ones / all-zeros).
+    #[inline]
+    #[target_feature(enable = "simd128")]
+    unsafe fn select(mask: L, t: L, f: L) -> L {
+        L(v128_bitselect(t.0, f.0, mask.0))
+    }
+    #[inline]
+    #[target_feature(enable = "simd128")]
+    unsafe fn lane0(self) -> u64 {
+        u64x2_extract_lane::<0>(self.0)
+    }
+    #[inline]
+    #[target_feature(enable = "simd128")]
+    unsafe fn lane1(self) -> u64 {
+        u64x2_extract_lane::<1>(self.0)
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Clone, Copy)]
+struct L(u64, u64);
+
+#[cfg(not(target_arch = "wasm32"))]
+impl L {
+    #[inline(always)]
+    unsafe fn splat(x: u64) -> L {
+        L(x, x)
+    }
+    #[inline(always)]
+    unsafe fn new(a: u64, b: u64) -> L {
+        L(a, b)
+    }
+    #[inline(always)]
+    unsafe fn add(self, o: L) -> L {
+        L(self.0.wrapping_add(o.0), self.1.wrapping_add(o.1))
+    }
+    #[inline(always)]
+    unsafe fn sub(self, o: L) -> L {
+        L(self.0.wrapping_sub(o.0), self.1.wrapping_sub(o.1))
+    }
+    #[inline(always)]
+    unsafe fn mul(self, o: L) -> L {
+        L(self.0.wrapping_mul(o.0), self.1.wrapping_mul(o.1))
+    }
+    #[inline(always)]
+    unsafe fn shr32(self) -> L {
+        L(self.0 >> 32, self.1 >> 32)
+    }
+    #[inline(always)]
+    unsafe fn ge(self, o: L) -> L {
+        L(
+            if self.0 >= o.0 { !0 } else { 0 },
+            if self.1 >= o.1 { !0 } else { 0 },
+        )
+    }
+    #[inline(always)]
+    unsafe fn select(mask: L, t: L, f: L) -> L {
+        L(
+            (t.0 & mask.0) | (f.0 & !mask.0),
+            (t.1 & mask.1) | (f.1 & !mask.1),
+        )
+    }
+    #[inline(always)]
+    unsafe fn lane0(self) -> u64 {
+        self.0
+    }
+    #[inline(always)]
+    unsafe fn lane1(self) -> u64 {
+        self.1
+    }
+}
+
+/// Lanewise reduce [0,4p) -> [0,2p).
+#[inline(always)]
+unsafe fn red2p_l(a: L, p2v: L) -> L {
+    let t = a.sub(p2v);
+    let m = a.ge(p2v);
+    L::select(m, t, a)
+}
+
+/// Lanewise lazy Shoup `x * c mod p` left in [0,2p) (no final conditional sub).
+/// Valid for any lane < 2^32 (Harvey's bound). `pv = splat(p)`.
+#[inline(always)]
+unsafe fn shoup_lazy_l(x: L, c: u32, cs: u32, pv: L) -> L {
+    let cv = L::splat(c as u64);
+    let csv = L::splat(cs as u64);
+    let q = x.mul(csv).shr32();
+    x.mul(cv).sub(q.mul(pv))
 }
 
 fn build_tables(p: u64) -> PrimeTables {
@@ -199,132 +340,6 @@ fn build_tables(p: u64) -> PrimeTables {
     pt
 }
 
-/// One forward radix-4 DIF butterfly on array `x` at base `i+j` (stride `len`),
-/// given the three stage twiddles already loaded. Lazy: values in [0,2p),
-/// intermediates in [0,4p). `e == 0` means trivial (unit) twiddles.
-#[allow(clippy::too_many_arguments)]
-#[inline(always)]
-unsafe fn r4_bfly(
-    x: &mut [u64; N], i: usize, j: usize, len: usize, p: u64, p2: u64, ic: u32, ics: u32, e: usize,
-    t1c: u32, t1s: u32, t2c: u32, t2s: u32, t3c: u32, t3s: u32,
-) {
-    let a = *x.get_unchecked(i + j);
-    let b = *x.get_unchecked(i + j + len);
-    let c = *x.get_unchecked(i + j + 2 * len);
-    let d = *x.get_unchecked(i + j + 3 * len);
-    let s0 = red2p(a + c, p);
-    let s2 = red2p(b + d, p);
-    let s1 = red2p(a + p2 - c, p);
-    let s3 = b + p2 - d; // in [0,4p); feeds only the lazy Shoup, which tolerates < 2^32
-    let is3 = shoup_lazy(s3, ic, ics, p); // I * (b - d), in [0,2p)
-    let y0 = red2p(s0 + s2, p);
-    let y2 = s0 + p2 - s2; // [0,4p)
-    let y1 = s1 + is3; // [0,4p)
-    let y3 = s1 + p2 - is3; // [0,4p)
-    *x.get_unchecked_mut(i + j) = y0;
-    if e == 0 {
-        *x.get_unchecked_mut(i + j + len) = red2p(y1, p);
-        *x.get_unchecked_mut(i + j + 2 * len) = red2p(y2, p);
-        *x.get_unchecked_mut(i + j + 3 * len) = red2p(y3, p);
-    } else {
-        *x.get_unchecked_mut(i + j + len) = shoup_lazy(y1, t1c, t1s, p);
-        *x.get_unchecked_mut(i + j + 2 * len) = shoup_lazy(y2, t2c, t2s, p);
-        *x.get_unchecked_mut(i + j + 3 * len) = shoup_lazy(y3, t3c, t3s, p);
-    }
-}
-
-/// One radix-4 DIF butterfly on four values (lazy: in [0,2p), out [0,2p)).
-/// `triv` skips the (unit) stage twiddles.
-#[allow(clippy::too_many_arguments)]
-#[inline(always)]
-fn r4_lazy(
-    a: u64, b: u64, c: u64, d: u64, p: u64, p2: u64, ic: u32, ics: u32, triv: bool,
-    t1c: u32, t1s: u32, t2c: u32, t2s: u32, t3c: u32, t3s: u32,
-) -> (u64, u64, u64, u64) {
-    let s0 = red2p(a + c, p);
-    let s2 = red2p(b + d, p);
-    let s1 = red2p(a + p2 - c, p);
-    let s3 = b + p2 - d; // in [0,4p); feeds only the lazy Shoup, which tolerates < 2^32
-    let is3 = shoup_lazy(s3, ic, ics, p);
-    let y0 = red2p(s0 + s2, p);
-    let y2 = s0 + p2 - s2;
-    let y1 = s1 + is3;
-    let y3 = s1 + p2 - is3;
-    if triv {
-        (y0, red2p(y1, p), red2p(y2, p), red2p(y3, p))
-    } else {
-        (
-            y0,
-            shoup_lazy(y1, t1c, t1s, p),
-            shoup_lazy(y2, t2c, t2s, p),
-            shoup_lazy(y3, t3c, t3s, p),
-        )
-    }
-}
-
-/// Forward radix-4 DIF of both operands in lockstep, through the middle stages only
-/// (the psi pre-weight is folded into the first stage's load). The last two stages are
-/// completed in the fused `boundary` pass.
-#[allow(clippy::too_many_arguments)]
-#[inline(always)]
-fn dif4_2(
-    a: &[u32; N], b: &[u32; N], xa: &mut [u64; N], xb: &mut [u64; N], psi: &[u32; N], psis: &[u32; N],
-    w: &[u32; N], ws: &[u32; N], ic: u32, ics: u32, p: u64,
-) {
-    let p2 = p << 1;
-    // First stage (half-block N/4) with the psi pre-weight folded into the load.
-    let len0 = N / 4;
-    let mut j = 0;
-    while j < len0 {
-        unsafe {
-            let e = j; // step = 1
-            let (t1c, t1s, t2c, t2s, t3c, t3s) = twiddles3(w, ws, e);
-            let pw = |src: &[u32; N], idx: usize| {
-                shoup_lazy(*src.get_unchecked(idx) as u64, *psi.get_unchecked(idx), *psis.get_unchecked(idx), p)
-            };
-            let (y0, y1, y2, y3) = r4_lazy(
-                pw(a, j), pw(a, j + len0), pw(a, j + 2 * len0), pw(a, j + 3 * len0), p, p2, ic, ics,
-                e == 0, t1c, t1s, t2c, t2s, t3c, t3s,
-            );
-            *xa.get_unchecked_mut(j) = y0;
-            *xa.get_unchecked_mut(j + len0) = y1;
-            *xa.get_unchecked_mut(j + 2 * len0) = y2;
-            *xa.get_unchecked_mut(j + 3 * len0) = y3;
-            let (z0, z1, z2, z3) = r4_lazy(
-                pw(b, j), pw(b, j + len0), pw(b, j + 2 * len0), pw(b, j + 3 * len0), p, p2, ic, ics,
-                e == 0, t1c, t1s, t2c, t2s, t3c, t3s,
-            );
-            *xb.get_unchecked_mut(j) = z0;
-            *xb.get_unchecked_mut(j + len0) = z1;
-            *xb.get_unchecked_mut(j + 2 * len0) = z2;
-            *xb.get_unchecked_mut(j + 3 * len0) = z3;
-        }
-        j += 1;
-    }
-    // Remaining strided stages (half-blocks 64, 16) on xa, xb.
-    let mut len = N / 16;
-    while len >= 16 {
-        let step = N / (4 * len);
-        let mut i = 0;
-        while i < N {
-            let mut e = 0usize;
-            let mut jj = 0;
-            while jj < len {
-                unsafe {
-                    let (t1c, t1s, t2c, t2s, t3c, t3s) = twiddles3(w, ws, e);
-                    r4_bfly(xa, i, jj, len, p, p2, ic, ics, e, t1c, t1s, t2c, t2s, t3c, t3s);
-                    r4_bfly(xb, i, jj, len, p, p2, ic, ics, e, t1c, t1s, t2c, t2s, t3c, t3s);
-                }
-                e += step;
-                jj += 1;
-            }
-            i += 4 * len;
-        }
-        len >>= 2;
-    }
-    // The last two DIF stages are completed in the fused `boundary` pass.
-}
-
 /// Load the three stage twiddles (w^e, w^{2e}, w^{3e}) and their Shoup constants.
 #[inline(always)]
 unsafe fn twiddles3(w: &[u32; N], ws: &[u32; N], e: usize) -> (u32, u32, u32, u32, u32, u32) {
@@ -339,6 +354,130 @@ unsafe fn twiddles3(w: &[u32; N], ws: &[u32; N], e: usize) -> (u32, u32, u32, u3
             *w.get_unchecked(3 * e),
             *ws.get_unchecked(3 * e),
         )
+    }
+}
+
+/// One radix-4 DIF butterfly on four lane-vectors (lazy: in [0,2p), out [0,2p)).
+/// `triv` skips the (unit) stage twiddles. Both operands ride the two lanes.
+#[allow(clippy::too_many_arguments)]
+#[inline(always)]
+unsafe fn r4_lazy_l(
+    a: L, b: L, c: L, d: L, pv: L, p2v: L, ic: u32, ics: u32, triv: bool,
+    t1c: u32, t1s: u32, t2c: u32, t2s: u32, t3c: u32, t3s: u32,
+) -> (L, L, L, L) {
+    let s0 = red2p_l(a.add(c), p2v);
+    let s2 = red2p_l(b.add(d), p2v);
+    let s1 = red2p_l(a.add(p2v).sub(c), p2v);
+    let s3 = b.add(p2v).sub(d); // in [0,4p); feeds only the lazy Shoup
+    let is3 = shoup_lazy_l(s3, ic, ics, pv);
+    let y0 = red2p_l(s0.add(s2), p2v);
+    let y2 = s0.add(p2v).sub(s2);
+    let y1 = s1.add(is3);
+    let y3 = s1.add(p2v).sub(is3);
+    if triv {
+        (y0, red2p_l(y1, p2v), red2p_l(y2, p2v), red2p_l(y3, p2v))
+    } else {
+        (
+            y0,
+            shoup_lazy_l(y1, t1c, t1s, pv),
+            shoup_lazy_l(y2, t2c, t2s, pv),
+            shoup_lazy_l(y3, t3c, t3s, pv),
+        )
+    }
+}
+
+/// Forward radix-4 DIF of both operands in lockstep (lanes), through the middle
+/// stages only (the psi pre-weight is folded into the first stage's load). The
+/// last two stages are completed in the fused `boundary` pass.
+#[allow(clippy::too_many_arguments)]
+#[cfg_attr(target_arch = "wasm32", target_feature(enable = "simd128"))]
+unsafe fn dif4_2_simd(
+    a: &[u32; N], b: &[u32; N], xab: &mut [L; N], psi: &[u32; N], psis: &[u32; N],
+    w: &[u32; N], ws: &[u32; N], ic: u32, ics: u32, p: u64,
+) {
+    let pv = L::splat(p);
+    let p2v = L::splat(p << 1);
+    // First stage (half-block N/4) with the psi pre-weight folded into the load.
+    let len0 = N / 4;
+    let mut j = 0;
+    while j < len0 {
+        let e = j; // step = 1
+        let (t1c, t1s, t2c, t2s, t3c, t3s) = twiddles3(w, ws, e);
+        let pw = |idx: usize| -> L {
+            let v = L::new(*a.get_unchecked(idx) as u64, *b.get_unchecked(idx) as u64);
+            shoup_lazy_l(v, *psi.get_unchecked(idx), *psis.get_unchecked(idx), pv)
+        };
+        let (y0, y1, y2, y3) = r4_lazy_l(
+            pw(j), pw(j + len0), pw(j + 2 * len0), pw(j + 3 * len0), pv, p2v, ic, ics,
+            e == 0, t1c, t1s, t2c, t2s, t3c, t3s,
+        );
+        *xab.get_unchecked_mut(j) = y0;
+        *xab.get_unchecked_mut(j + len0) = y1;
+        *xab.get_unchecked_mut(j + 2 * len0) = y2;
+        *xab.get_unchecked_mut(j + 3 * len0) = y3;
+        j += 1;
+    }
+    // Remaining strided stages (half-blocks 64, 16) on xab.
+    let mut len = N / 16;
+    while len >= 16 {
+        let step = N / (4 * len);
+        let mut i = 0;
+        while i < N {
+            let mut e = 0usize;
+            let mut jj = 0;
+            while jj < len {
+                let (t1c, t1s, t2c, t2s, t3c, t3s) = twiddles3(w, ws, e);
+                let base = i + jj;
+                let (y0, y1, y2, y3) = r4_lazy_l(
+                    *xab.get_unchecked(base),
+                    *xab.get_unchecked(base + len),
+                    *xab.get_unchecked(base + 2 * len),
+                    *xab.get_unchecked(base + 3 * len),
+                    pv, p2v, ic, ics, e == 0, t1c, t1s, t2c, t2s, t3c, t3s,
+                );
+                *xab.get_unchecked_mut(base) = y0;
+                *xab.get_unchecked_mut(base + len) = y1;
+                *xab.get_unchecked_mut(base + 2 * len) = y2;
+                *xab.get_unchecked_mut(base + 3 * len) = y3;
+                e += step;
+                jj += 1;
+            }
+            i += 4 * len;
+        }
+        len >>= 2;
+    }
+}
+
+// ---- Contiguous 16-element tile sub-stages (used by the fused boundary pass) ----
+
+#[inline(always)]
+unsafe fn dif_l4_v(t: &mut [L; 16], w: &[u32; N], ws: &[u32; N], ic: u32, ics: u32, pv: L, p2v: L) {
+    for g in 0..4 {
+        let e = 64 * g;
+        let (t1c, t1s, t2c, t2s, t3c, t3s) = twiddles3(w, ws, e);
+        let (y0, y1, y2, y3) = r4_lazy_l(
+            *t.get_unchecked(g), *t.get_unchecked(g + 4), *t.get_unchecked(g + 8),
+            *t.get_unchecked(g + 12), pv, p2v, ic, ics, e == 0, t1c, t1s, t2c, t2s, t3c, t3s,
+        );
+        *t.get_unchecked_mut(g) = y0;
+        *t.get_unchecked_mut(g + 4) = y1;
+        *t.get_unchecked_mut(g + 8) = y2;
+        *t.get_unchecked_mut(g + 12) = y3;
+    }
+}
+
+#[inline(always)]
+unsafe fn dif_l1_v(t: &mut [L; 16], ic: u32, ics: u32, pv: L, p2v: L) {
+    for h in 0..4 {
+        let b4 = 4 * h;
+        let (y0, y1, y2, y3) = r4_lazy_l(
+            *t.get_unchecked(b4), *t.get_unchecked(b4 + 1), *t.get_unchecked(b4 + 2),
+            *t.get_unchecked(b4 + 3), pv, p2v, ic, ics, true, 0, 0, 0, 0, 0, 0,
+        );
+        *t.get_unchecked_mut(b4) = y0;
+        *t.get_unchecked_mut(b4 + 1) = y1;
+        *t.get_unchecked_mut(b4 + 2) = y2;
+        *t.get_unchecked_mut(b4 + 3) = y3;
     }
 }
 
@@ -368,6 +507,51 @@ fn r4_lazy_dit(
     let s3 = b + p2 - d; // in [0,4p); feeds only the lazy Shoup
     let js3 = shoup_lazy(s3, jc, jcs, p);
     (s0 + s2, s1 + js3, s0 + p2 - s2, s1 + p2 - js3) // each in [0,4p), unreduced
+}
+
+/// Scalar lazy Shoup (single value), used by the inverse DIT. Result in [0,2p).
+#[inline(always)]
+fn shoup_lazy(x: u64, c: u32, cs: u32, p: u64) -> u64 {
+    let q = x.wrapping_mul(cs as u64) >> 32;
+    x.wrapping_mul(c as u64).wrapping_sub(q.wrapping_mul(p))
+}
+
+/// First inverse sub-stage (trivial twiddles) specialized for inputs already in
+/// [0,2p) (the Montgomery pointwise output), so the per-input reductions are skipped.
+#[inline(always)]
+unsafe fn dit_l1_in2p(t: &mut [u64; 16], jc: u32, jcs: u32, p: u64, p2: u64) {
+    for h in 0..4 {
+        let b4 = 4 * h;
+        let a = *t.get_unchecked(b4);
+        let b = *t.get_unchecked(b4 + 1);
+        let c = *t.get_unchecked(b4 + 2);
+        let d = *t.get_unchecked(b4 + 3);
+        let s0 = red2p(a + c, p);
+        let s1 = red2p(a + p2 - c, p);
+        let s2 = red2p(b + d, p);
+        let s3 = b + p2 - d;
+        let js3 = shoup_lazy(s3, jc, jcs, p);
+        *t.get_unchecked_mut(b4) = s0 + s2;
+        *t.get_unchecked_mut(b4 + 1) = s1 + js3;
+        *t.get_unchecked_mut(b4 + 2) = s0 + p2 - s2;
+        *t.get_unchecked_mut(b4 + 3) = s1 + p2 - js3;
+    }
+}
+
+#[inline(always)]
+unsafe fn dit_l4(t: &mut [u64; 16], iw: &[u32; N], iws: &[u32; N], jc: u32, jcs: u32, p: u64, p2: u64) {
+    for g in 0..4 {
+        let e = 64 * g;
+        let (it1c, it1s, it2c, it2s, it3c, it3s) = twiddles3(iw, iws, e);
+        let (o0, o1, o2, o3) = r4_lazy_dit(
+            *t.get_unchecked(g), *t.get_unchecked(g + 4), *t.get_unchecked(g + 8),
+            *t.get_unchecked(g + 12), p, p2, jc, jcs, e == 0, it1c, it1s, it2c, it2s, it3c, it3s,
+        );
+        *t.get_unchecked_mut(g) = o0;
+        *t.get_unchecked_mut(g + 4) = o1;
+        *t.get_unchecked_mut(g + 8) = o2;
+        *t.get_unchecked_mut(g + 12) = o3;
+    }
 }
 
 /// Remaining inverse DIT stages (the first two are done by `boundary`): the middle
@@ -434,133 +618,58 @@ fn dit4_rest(
     }
 }
 
-/// Forward transform of both multiply operands together (shared twiddle loads;
-/// psi pre-weight folded into the first DIF stage).
-#[inline(always)]
-fn fwd2(a: &[u32; N], b: &[u32; N], t: &PrimeTables) -> ([u64; N], [u64; N]) {
-    let p = t.p;
-    let mut xa = [0u64; N];
-    let mut xb = [0u64; N];
-    dif4_2(a, b, &mut xa, &mut xb, &t.psi, &t.psis, &t.w, &t.ws, t.w[N / 4], t.ws[N / 4], p);
-    (xa, xb)
-}
-
-// ---- Contiguous 16-element tile sub-stages (used by the fused boundary pass) ----
-
-#[inline(always)]
-unsafe fn dif_l4(t: &mut [u64; 16], w: &[u32; N], ws: &[u32; N], ic: u32, ics: u32, p: u64, p2: u64) {
-    for g in 0..4 {
-        let e = 64 * g;
-        let (t1c, t1s, t2c, t2s, t3c, t3s) = twiddles3(w, ws, e);
-        let (y0, y1, y2, y3) = r4_lazy(
-            *t.get_unchecked(g), *t.get_unchecked(g + 4), *t.get_unchecked(g + 8),
-            *t.get_unchecked(g + 12), p, p2, ic, ics, e == 0, t1c, t1s, t2c, t2s, t3c, t3s,
-        );
-        *t.get_unchecked_mut(g) = y0;
-        *t.get_unchecked_mut(g + 4) = y1;
-        *t.get_unchecked_mut(g + 8) = y2;
-        *t.get_unchecked_mut(g + 12) = y3;
-    }
-}
-
-#[inline(always)]
-unsafe fn dif_l1(t: &mut [u64; 16], ic: u32, ics: u32, p: u64, p2: u64) {
-    for h in 0..4 {
-        let b4 = 4 * h;
-        let (y0, y1, y2, y3) = r4_lazy(
-            *t.get_unchecked(b4), *t.get_unchecked(b4 + 1), *t.get_unchecked(b4 + 2),
-            *t.get_unchecked(b4 + 3), p, p2, ic, ics, true, 0, 0, 0, 0, 0, 0,
-        );
-        *t.get_unchecked_mut(b4) = y0;
-        *t.get_unchecked_mut(b4 + 1) = y1;
-        *t.get_unchecked_mut(b4 + 2) = y2;
-        *t.get_unchecked_mut(b4 + 3) = y3;
-    }
-}
-
-/// First inverse sub-stage (trivial twiddles) specialized for inputs already in
-/// [0,2p) (the Montgomery pointwise output), so the per-input reductions are skipped.
-#[inline(always)]
-unsafe fn dit_l1_in2p(t: &mut [u64; 16], jc: u32, jcs: u32, p: u64, p2: u64) {
-    for h in 0..4 {
-        let b4 = 4 * h;
-        let a = *t.get_unchecked(b4);
-        let b = *t.get_unchecked(b4 + 1);
-        let c = *t.get_unchecked(b4 + 2);
-        let d = *t.get_unchecked(b4 + 3);
-        let s0 = red2p(a + c, p);
-        let s1 = red2p(a + p2 - c, p);
-        let s2 = red2p(b + d, p);
-        let s3 = b + p2 - d;
-        let js3 = shoup_lazy(s3, jc, jcs, p);
-        *t.get_unchecked_mut(b4) = s0 + s2;
-        *t.get_unchecked_mut(b4 + 1) = s1 + js3;
-        *t.get_unchecked_mut(b4 + 2) = s0 + p2 - s2;
-        *t.get_unchecked_mut(b4 + 3) = s1 + p2 - js3;
-    }
-}
-
-#[inline(always)]
-unsafe fn dit_l4(t: &mut [u64; 16], iw: &[u32; N], iws: &[u32; N], jc: u32, jcs: u32, p: u64, p2: u64) {
-    for g in 0..4 {
-        let e = 64 * g;
-        let (it1c, it1s, it2c, it2s, it3c, it3s) = twiddles3(iw, iws, e);
-        let (o0, o1, o2, o3) = r4_lazy_dit(
-            *t.get_unchecked(g), *t.get_unchecked(g + 4), *t.get_unchecked(g + 8),
-            *t.get_unchecked(g + 12), p, p2, jc, jcs, e == 0, it1c, it1s, it2c, it2s, it3c, it3s,
-        );
-        *t.get_unchecked_mut(g) = o0;
-        *t.get_unchecked_mut(g + 4) = o1;
-        *t.get_unchecked_mut(g + 8) = o2;
-        *t.get_unchecked_mut(g + 12) = o3;
-    }
-}
-
-/// Fused transform boundary on contiguous 16-element blocks: `xa`,`xb` hold the two
-/// operands after the middle forward stages; per block this completes the forward
-/// (last two DIF stages) for each, does the Montgomery pointwise product, and starts
-/// the inverse (first two DIT stages) — entirely in registers, so the full forward
-/// spectra never touch memory.
-#[inline(always)]
-fn boundary(xa: &[u64; N], xb: &[u64; N], out: &mut [u64; N], t: &PrimeTables) {
+/// Fused transform boundary on contiguous 16-element blocks: `xab` holds both
+/// operands (lanes) after the middle forward stages; per block this completes the
+/// forward (last two DIF stages) for each, does the Montgomery pointwise product
+/// (combining the two lanes), and starts the inverse (first two DIT stages) —
+/// entirely in registers, so the full forward spectra never touch memory.
+#[cfg_attr(target_arch = "wasm32", target_feature(enable = "simd128"))]
+unsafe fn boundary_simd(xab: &[L; N], out: &mut [u64; N], t: &PrimeTables) {
     let p = t.p;
     let p2 = p << 1;
+    let pv = L::splat(p);
+    let p2v = L::splat(p2);
     let (icf, icfs) = (t.w[N / 4], t.ws[N / 4]); // forward 4th root I
     let (jc, jcs) = (t.iw[N / 4], t.iws[N / 4]); // inverse 4th root J
     let pinv = t.pinv;
     let mut i = 0;
     while i < N {
-        let mut ta = [0u64; 16];
-        let mut tb = [0u64; 16];
-        unsafe {
-            for k in 0..16 {
-                *ta.get_unchecked_mut(k) = *xa.get_unchecked(i + k);
-                *tb.get_unchecked_mut(k) = *xb.get_unchecked(i + k);
-            }
-            dif_l4(&mut ta, &t.w, &t.ws, icf, icfs, p, p2);
-            dif_l1(&mut ta, icf, icfs, p, p2);
-            dif_l4(&mut tb, &t.w, &t.ws, icf, icfs, p, p2);
-            dif_l1(&mut tb, icf, icfs, p, p2);
-            let mut tc = [0u64; 16];
-            for k in 0..16 {
-                *tc.get_unchecked_mut(k) = mont_mul(*ta.get_unchecked(k), *tb.get_unchecked(k), p, pinv);
-            }
-            dit_l1_in2p(&mut tc, jc, jcs, p, p2);
-            dit_l4(&mut tc, &t.iw, &t.iws, jc, jcs, p, p2);
-            for k in 0..16 {
-                *out.get_unchecked_mut(i + k) = *tc.get_unchecked(k);
-            }
+        let mut ta = [L::splat(0); 16];
+        for k in 0..16 {
+            *ta.get_unchecked_mut(k) = *xab.get_unchecked(i + k);
+        }
+        dif_l4_v(&mut ta, &t.w, &t.ws, icf, icfs, pv, p2v);
+        dif_l1_v(&mut ta, icf, icfs, pv, p2v);
+        // Pointwise: combine the two lanes (a*b) into a single Montgomery product.
+        let mut tc = [0u64; 16];
+        for k in 0..16 {
+            let v = *ta.get_unchecked(k);
+            *tc.get_unchecked_mut(k) = mont_mul(v.lane0(), v.lane1(), p, pinv);
+        }
+        dit_l1_in2p(&mut tc, jc, jcs, p, p2);
+        dit_l4(&mut tc, &t.iw, &t.iws, jc, jcs, p, p2);
+        for k in 0..16 {
+            *out.get_unchecked_mut(i + k) = *tc.get_unchecked(k);
         }
         i += 16;
     }
 }
 
 fn convolve_mod(t: &PrimeTables, a: &[u32; N], b: &[u32; N]) -> [u64; N] {
-    let (xa, xb) = fwd2(a, b, t); // forward through the middle stages
     let mut x = [0u64; N];
-    boundary(&xa, &xb, &mut x, t); // last fwd stages + pointwise + first inv stages, fused
+    unsafe {
+        fwd_boundary(t, a, b, &mut x); // forward (SIMD a/b) + pointwise + first inv stages
+    }
     dit4_rest(&mut x, &t.iw, &t.iws, t.iw[N / 4], t.iws[N / 4], &t.ipsi, &t.ipsis, t.p); // rest of inverse
     x
+}
+
+/// Forward transform of both operands (SIMD lockstep) then the fused boundary pass.
+#[cfg_attr(target_arch = "wasm32", target_feature(enable = "simd128"))]
+unsafe fn fwd_boundary(t: &PrimeTables, a: &[u32; N], b: &[u32; N], out: &mut [u64; N]) {
+    let mut xab = [L::splat(0); N];
+    dif4_2_simd(a, b, &mut xab, &t.psi, &t.psis, &t.w, &t.ws, t.w[N / 4], t.ws[N / 4], t.p);
+    boundary_simd(&xab, out, t);
 }
 
 /// Create a plan (precomputes NTT tables — free under the metric).
