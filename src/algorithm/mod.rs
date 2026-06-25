@@ -133,18 +133,14 @@ fn red2p(a: u64, p: u64) -> u64 {
     }
 }
 
-/// Montgomery product (R = 2^32): returns a*b*R^{-1} mod p in [0,p), division-free.
+/// Montgomery product (R = 2^32): returns a*b*R^{-1} mod p in [0,2p), division-free
+/// (the final conditional subtraction is omitted — the consumer reduces lazily).
 /// `pinv = -p^{-1} mod 2^32`. Inputs a,b < 2p < 2^32, so a*b < 4p^2 < p*R.
 #[inline(always)]
 fn mont_mul(a: u64, b: u64, p: u64, pinv: u32) -> u64 {
     let t = a * b;
     let m = (t as u32).wrapping_mul(pinv) as u64; // (t mod R) * (-p^{-1}) mod R
-    let r = (t + m * p) >> 32; // exact /R, result in [0,2p)
-    if r >= p {
-        r - p
-    } else {
-        r
-    }
+    (t + m * p) >> 32 // exact /R, result in [0,2p)
 }
 
 fn build_tables(p: u64) -> PrimeTables {
@@ -482,18 +478,25 @@ unsafe fn dif_l1(t: &mut [u64; 16], ic: u32, ics: u32, p: u64, p2: u64) {
     }
 }
 
+/// First inverse sub-stage (trivial twiddles) specialized for inputs already in
+/// [0,2p) (the Montgomery pointwise output), so the per-input reductions are skipped.
 #[inline(always)]
-unsafe fn dit_l1(t: &mut [u64; 16], jc: u32, jcs: u32, p: u64, p2: u64) {
+unsafe fn dit_l1_in2p(t: &mut [u64; 16], jc: u32, jcs: u32, p: u64, p2: u64) {
     for h in 0..4 {
         let b4 = 4 * h;
-        let (o0, o1, o2, o3) = r4_lazy_dit(
-            *t.get_unchecked(b4), *t.get_unchecked(b4 + 1), *t.get_unchecked(b4 + 2),
-            *t.get_unchecked(b4 + 3), p, p2, jc, jcs, true, 0, 0, 0, 0, 0, 0,
-        );
-        *t.get_unchecked_mut(b4) = o0;
-        *t.get_unchecked_mut(b4 + 1) = o1;
-        *t.get_unchecked_mut(b4 + 2) = o2;
-        *t.get_unchecked_mut(b4 + 3) = o3;
+        let a = *t.get_unchecked(b4);
+        let b = *t.get_unchecked(b4 + 1);
+        let c = *t.get_unchecked(b4 + 2);
+        let d = *t.get_unchecked(b4 + 3);
+        let s0 = red2p(a + c, p);
+        let s1 = red2p(a + p2 - c, p);
+        let s2 = red2p(b + d, p);
+        let s3 = b + p2 - d;
+        let js3 = shoup_lazy(s3, jc, jcs, p);
+        *t.get_unchecked_mut(b4) = s0 + s2;
+        *t.get_unchecked_mut(b4 + 1) = s1 + js3;
+        *t.get_unchecked_mut(b4 + 2) = s0 + p2 - s2;
+        *t.get_unchecked_mut(b4 + 3) = s1 + p2 - js3;
     }
 }
 
@@ -542,7 +545,7 @@ fn boundary(xa: &[u64; N], xb: &[u64; N], out: &mut [u64; N], t: &PrimeTables) {
             for k in 0..16 {
                 *tc.get_unchecked_mut(k) = mont_mul(*ta.get_unchecked(k), *tb.get_unchecked(k), p, pinv);
             }
-            dit_l1(&mut tc, jc, jcs, p, p2);
+            dit_l1_in2p(&mut tc, jc, jcs, p, p2);
             dit_l4(&mut tc, &t.iw, &t.iws, jc, jcs, p, p2);
             for k in 0..16 {
                 *out.get_unchecked_mut(i + k) = *tc.get_unchecked(k);
