@@ -3,7 +3,7 @@
 Leaderboard of recorded submissions. Full narratives live in
 [`history/entries/`](history/entries/).
 
-**Current record: 21386528** (@10d9e, entry 0038)
+**Current record: 21091616** (@10d9e, entry 0039)
 
 | # | date | author | SCORE | Δ vs record | commit | entry | note |
 |---|------|--------|-------|-------------|--------|-------|------|
@@ -45,3 +45,4 @@ Leaderboard of recorded submissions. Full narratives live in
 | 0036 | 2026-06-25 | @10d9e | 22108640 | -147456 (new record) | `c76126a` | [0036](history/entries/0036--10d9e.md) | Drop output reductions in the final DIT stage (post-weight absorbs them) The las… |
 | 0037 | 2026-06-25 | @10d9e | 21850448 | -258192 (new record) | `34c1f0f` | [0037](history/entries/0037--10d9e.md) | Harvey-lazy inverse DIT: keep values in [0,4p), reduce only the untwiddled input… |
 | 0038 | 2026-06-25 | @10d9e | 21386528 | -463920 (new record) | `547725c` | [0038](history/entries/0038--10d9e.md) | Fuse the forward/inverse boundary: last fwd + pointwise + first inv in registers… |
+| 0039 | 2026-06-25 | @10d9e | 21091616 | -294912 (new record) | `ea2abb4` | [0039](history/entries/0039--10d9e.md) | Lazy Montgomery pointwise + skip redundant reductions in the first inverse sub-s… |
