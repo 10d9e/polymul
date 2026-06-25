@@ -227,6 +227,24 @@ impl L {
             L(i64x2_shuffle::<1, 3>(x.0, y.0)),
         )
     }
+    /// Pack four consecutive (a,b) u32 pairs into four lane-vectors. Two v128 loads
+    /// (a[0..4], b[0..4]), two interleave shuffles, and four zero-extending widenings
+    /// produce L(a0,b0), L(a1,b1), L(a2,b2), L(a3,b3) — ~2.5 ops/element vs the ~13 of
+    /// four scalar `L::new`s (each of which loads + zero-extends two u32 separately).
+    #[inline]
+    #[target_feature(enable = "simd128")]
+    unsafe fn pack4(ap: *const u32, bp: *const u32) -> (L, L, L, L) {
+        let av = v128_load(ap as *const v128); // [a0,a1,a2,a3]
+        let bv = v128_load(bp as *const v128); // [b0,b1,b2,b3]
+        let lo = i32x4_shuffle::<0, 4, 1, 5>(av, bv); // [a0,b0,a1,b1]
+        let hi = i32x4_shuffle::<2, 6, 3, 7>(av, bv); // [a2,b2,a3,b3]
+        (
+            L(u64x2_extend_low_u32x4(lo)),  // (a0,b0)
+            L(u64x2_extend_high_u32x4(lo)), // (a1,b1)
+            L(u64x2_extend_low_u32x4(hi)),  // (a2,b2)
+            L(u64x2_extend_high_u32x4(hi)), // (a3,b3)
+        )
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -308,6 +326,15 @@ impl L {
     #[inline(always)]
     unsafe fn unzip(x: L, y: L) -> (L, L) {
         (L(x.0, y.0), L(x.1, y.1))
+    }
+    #[inline(always)]
+    unsafe fn pack4(ap: *const u32, bp: *const u32) -> (L, L, L, L) {
+        (
+            L(*ap as u64, *bp as u64),
+            L(*ap.add(1) as u64, *bp.add(1) as u64),
+            L(*ap.add(2) as u64, *bp.add(2) as u64),
+            L(*ap.add(3) as u64, *bp.add(3) as u64),
+        )
     }
 }
 
@@ -859,8 +886,16 @@ unsafe fn fwd_boundary(t: &PrimeTables, ab: &[L; N], out: &mut [u64; N]) {
 #[cfg_attr(target_arch = "wasm32", target_feature(enable = "simd128"))]
 unsafe fn pack_ab(a: &[u32; N], b: &[u32; N]) -> [L; N] {
     let mut ab = [L::splat(0); N];
-    for i in 0..N {
-        *ab.get_unchecked_mut(i) = L::new(*a.get_unchecked(i) as u64, *b.get_unchecked(i) as u64);
+    let ap = a.as_ptr();
+    let bp = b.as_ptr();
+    let mut i = 0;
+    while i < N {
+        let (l0, l1, l2, l3) = L::pack4(ap.add(i), bp.add(i));
+        *ab.get_unchecked_mut(i) = l0;
+        *ab.get_unchecked_mut(i + 1) = l1;
+        *ab.get_unchecked_mut(i + 2) = l2;
+        *ab.get_unchecked_mut(i + 3) = l3;
+        i += 4;
     }
     ab
 }
