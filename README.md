@@ -19,6 +19,7 @@ src/algorithm/   EDITABLE — poly_mul implementation (Plan, FFT/NTT, etc.)
 src/harness/     frozen   — reference oracle, fixtures, scoring
 src/main.rs      frozen   — CLI
 tests/           frozen   — correctness gate (synthetic, not corpus-tied)
+benches/         harness  — criterion wall-clock timing (informational; `cargo bench`)
 fixtures/        frozen   — pair metadata + baselines
 history/         ledger   — submission history (CI-only)
 scripts/         frozen   — guard, evaluate, submit, scorekeeper

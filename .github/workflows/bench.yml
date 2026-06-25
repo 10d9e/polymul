@@ -1,0 +1,49 @@
+name: Benchmark
+
+# Wall-clock timing benchmark (criterion). Informational only — the scoring
+# metric is the deterministic WORK count (see Verify PR / Scorekeeper). Runtime
+# on shared CI runners is noisy, so this is a cross-check, not a gate.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - src/algorithm/**
+      - benches/**
+      - Cargo.toml
+      - .github/workflows/bench.yml
+  pull_request:
+    branches: [main]
+    paths:
+      - src/algorithm/**
+      - benches/**
+  workflow_dispatch:
+
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Run criterion benchmark
+        run: |
+          cargo bench --bench poly_mul -- \
+            --warm-up-time 1 --measurement-time 3 --noplot \
+            | tee bench.out
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo '## poly_mul timing benchmark'
+            echo
+            echo 'Informational wall-clock timing; the scoring metric is the deterministic WORK count.'
+            echo
+            echo '```'
+            grep -E 'poly_mul|time:|thrpt:' bench.out || echo '(no benchmark output captured)'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

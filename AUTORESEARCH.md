@@ -22,6 +22,12 @@ Measure WORK directly:
 bash scripts/measure-complexity.sh
 ```
 
+WORK (the deterministic weighted cost below) is the **scoring metric**. As an
+informational cross-check there is also a wall-clock timing benchmark (criterion)
+over the same fixture corpus — run `cargo bench`, or see it in CI (the
+**Benchmark** workflow). Timing is host- and noise-dependent, so it never gates a
+submission; only WORK does.
+
 WORK is a deterministic, **weighted** compute cost: each executed wasm operator
 is charged a weight reflecting its real hardware cost while running
 `bench_polymul` on fixed fixture pairs. Lower is faster. The weights are roughly

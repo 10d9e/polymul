@@ -12,6 +12,15 @@ path = "src/lib.rs"
 name = "polymul"
 path = "src/main.rs"
 
+[dev-dependencies]
+criterion = "0.5"
+
+# Wall-clock timing benchmark (complements the deterministic WORK metric).
+# Dev-dependency only: it never affects the algorithm build or the wasm meter.
+[[bench]]
+name = "poly_mul"
+harness = false
+
 [profile.release]
 opt-level = 3
 lto = true
