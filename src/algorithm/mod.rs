@@ -530,32 +530,36 @@ unsafe fn dif4_2_simd(
         *xab.get_unchecked_mut(j + 3 * len0) = y3;
         j += 1;
     }
-    // Remaining strided stages (half-blocks 64, 16) on xab.
+    // Remaining strided stages (half-blocks 64, 16) on xab. The stage twiddle
+    // depends only on `e` (the butterfly column), not on the block `i`, so the
+    // butterfly loop is the OUTER loop: each twiddle vector is loaded once and the
+    // inner block loop reuses it from registers (instead of reloading per block).
     let mut len = N / 16;
     while len >= 16 {
         let step = N / (4 * len);
-        let mut i = 0;
-        while i < N {
-            let mut e = 0usize;
-            let mut jj = 0;
-            while jj < len {
-                let (t1c, t1s, t2c, t2s, t3c, t3s) = twiddles3_splat(w, ws, e);
+        let mut e = 0usize;
+        let mut jj = 0;
+        while jj < len {
+            let (t1c, t1s, t2c, t2s, t3c, t3s) = twiddles3_splat(w, ws, e);
+            let triv = e == 0;
+            let mut i = 0;
+            while i < N {
                 let base = i + jj;
                 let (y0, y1, y2, y3) = r4_lazy_l(
                     *xab.get_unchecked(base),
                     *xab.get_unchecked(base + len),
                     *xab.get_unchecked(base + 2 * len),
                     *xab.get_unchecked(base + 3 * len),
-                    pv, p2v, icv, icsv, e == 0, t1c, t1s, t2c, t2s, t3c, t3s,
+                    pv, p2v, icv, icsv, triv, t1c, t1s, t2c, t2s, t3c, t3s,
                 );
                 *xab.get_unchecked_mut(base) = y0;
                 *xab.get_unchecked_mut(base + len) = y1;
                 *xab.get_unchecked_mut(base + 2 * len) = y2;
                 *xab.get_unchecked_mut(base + 3 * len) = y3;
-                e += step;
-                jj += 1;
+                i += 4 * len;
             }
-            i += 4 * len;
+            e += step;
+            jj += 1;
         }
         len >>= 2;
     }
@@ -673,16 +677,19 @@ unsafe fn dit4_rest(
     let jcv = L::splat(jc);
     let jcsv = L::splat(jcs);
     let xp = x.as_mut_ptr();
+    // Butterfly-outer loop: the per-lane twiddles depend only on the column `j`, not
+    // the block `i`, so they are loaded once and reused across the inner block loop
+    // from registers (instead of reloading per block).
     let mut len = 16;
     while len < N / 4 {
         let step = N / (4 * len);
-        let mut i = 0;
-        while i < N {
-            let mut j = 0;
-            while j < len {
-                let e0 = j * step;
-                let e1 = e0 + step;
-                let (t1c, t1s, t2c, t2s, t3c, t3s) = twiddles3_l(iw, iws, e0, e1);
+        let mut j = 0;
+        while j < len {
+            let e0 = j * step;
+            let e1 = e0 + step;
+            let (t1c, t1s, t2c, t2s, t3c, t3s) = twiddles3_l(iw, iws, e0, e1);
+            let mut i = 0;
+            while i < N {
                 let base = i + j;
                 let a = L::load(xp.add(base));
                 let b = L::load(xp.add(base + len));
@@ -694,9 +701,9 @@ unsafe fn dit4_rest(
                 L::store(xp.add(base + len), o1);
                 L::store(xp.add(base + 2 * len), o2);
                 L::store(xp.add(base + 3 * len), o3);
-                j += 2;
+                i += 4 * len;
             }
-            i += 4 * len;
+            j += 2;
         }
         len <<= 2;
     }
