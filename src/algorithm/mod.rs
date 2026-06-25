@@ -59,12 +59,12 @@ struct PrimeTables {
     // so its tables stay u32 and are loaded as lane pairs.
     psi: [u64; N],   // psi^j               (negacyclic pre-weight)
     psis: [u64; N],  //   "  Shoup constant
-    ipsi: [u32; N],  // psi^{-j} * N^{-1}    (post-weight, folds inverse scale)
-    ipsis: [u32; N], //   "  Shoup constant
+    ipsi: [u64; N],  // psi^{-j} * N^{-1}    (post-weight, folds inverse scale)
+    ipsis: [u64; N], //   "  Shoup constant
     w: [u64; N],     // w^e   forward twiddle powers (w = psi^2, a primitive N-th root)
     ws: [u64; N],    //   "  Shoup constant
-    iw: [u32; N],    // w^{-e} inverse twiddle powers
-    iws: [u32; N],   //   "  Shoup constant
+    iw: [u64; N],    // w^{-e} inverse twiddle powers (loaded as lane pairs)
+    iws: [u64; N],   //   "  Shoup constant
     pinv: u32,       // -p^{-1} mod 2^32, for the Montgomery pointwise product
 }
 
@@ -334,10 +334,10 @@ unsafe fn redp_l(a: L, pv: L) -> L {
 /// holds the constant for lane 0 (e0) and lane 1 (e1).
 #[inline(always)]
 unsafe fn twiddles3_l(
-    w: &[u32; N], ws: &[u32; N], e0: usize, e1: usize,
+    w: &[u64; N], ws: &[u64; N], e0: usize, e1: usize,
 ) -> (L, L, L, L, L, L) {
-    let g = |t: &[u32; N], a: usize, b: usize| {
-        L::new(*t.get_unchecked(a) as u64, *t.get_unchecked(b) as u64)
+    let g = |t: &[u64; N], a: usize, b: usize| {
+        L::new(*t.get_unchecked(a), *t.get_unchecked(b))
     };
     (
         g(w, e0, e1), g(ws, e0, e1),
@@ -407,8 +407,8 @@ fn build_tables(p: u64) -> PrimeTables {
         pt.psis[j] = shoup_const(pm, p) as u64;
         let ip = (iacc as u128 * ninv as u128 % p as u128) as u64; // psi^{-j} * N^{-1}
         let ipm = (ip as u128 * rinv as u128 % p as u128) as u64; //   * R^{-1} (de-Montgomery)
-        pt.ipsi[j] = ipm as u32;
-        pt.ipsis[j] = shoup_const(ipm, p);
+        pt.ipsi[j] = ipm;
+        pt.ipsis[j] = shoup_const(ipm, p) as u64;
         acc = (acc as u128 * psi_root as u128 % p as u128) as u64;
         iacc = (iacc as u128 * psi_inv as u128 % p as u128) as u64;
     }
@@ -418,8 +418,8 @@ fn build_tables(p: u64) -> PrimeTables {
     for e in 0..N {
         pt.w[e] = wacc;
         pt.ws[e] = shoup_const(wacc, p) as u64;
-        pt.iw[e] = iwacc as u32;
-        pt.iws[e] = shoup_const(iwacc, p);
+        pt.iw[e] = iwacc;
+        pt.iws[e] = shoup_const(iwacc, p) as u64;
         wacc = (wacc as u128 * w_root as u128 % p as u128) as u64;
         iwacc = (iwacc as u128 * w_inv as u128 % p as u128) as u64;
     }
@@ -602,7 +602,7 @@ unsafe fn dit_l1_in2p(t: &mut [u64; 16], jc: u32, jcs: u32, p: u64, p2: u64) {
 /// g+12), so a pair (g, g+1) rides the two lanes with contiguous v128 loads; the
 /// two lanes' twiddles (e=64g, 64(g+1)) are loaded as pairs.
 #[inline(always)]
-unsafe fn dit_l4_v(t: &mut [u64; 16], iw: &[u32; N], iws: &[u32; N], jcv: L, jcsv: L, pv: L, p2v: L) {
+unsafe fn dit_l4_v(t: &mut [u64; 16], iw: &[u64; N], iws: &[u64; N], jcv: L, jcsv: L, pv: L, p2v: L) {
     let tp = t.as_mut_ptr();
     let mut g = 0;
     while g < 4 {
@@ -630,13 +630,13 @@ unsafe fn dit_l4_v(t: &mut [u64; 16], iw: &[u32; N], iws: &[u32; N], jcv: L, jcs
 #[allow(clippy::too_many_arguments)]
 #[cfg_attr(target_arch = "wasm32", target_feature(enable = "simd128"))]
 unsafe fn dit4_rest(
-    x: &mut [u64; N], iw: &[u32; N], iws: &[u32; N], jc: u32, jcs: u32,
-    ipsi: &[u32; N], ipsis: &[u32; N], p: u64,
+    x: &mut [u64; N], iw: &[u64; N], iws: &[u64; N], jc: u64, jcs: u64,
+    ipsi: &[u64; N], ipsis: &[u64; N], p: u64,
 ) {
     let pv = L::splat(p);
     let p2v = L::splat(p << 1);
-    let jcv = L::splat(jc as u64);
-    let jcsv = L::splat(jcs as u64);
+    let jcv = L::splat(jc);
+    let jcsv = L::splat(jcs);
     let xp = x.as_mut_ptr();
     let mut len = 16;
     while len < N / 4 {
@@ -678,8 +678,8 @@ unsafe fn dit4_rest(
             r4_lazy_dit_l(a, b, c, d, pv, p2v, jcv, jcsv, t1c, t1s, t2c, t2s, t3c, t3s);
         // Post-weight (shoup with conditional subtract -> [0,p)) per lane position.
         let pw = |o: L, pos: usize| -> L {
-            let ipv = L::new(*ipsi.get_unchecked(pos) as u64, *ipsi.get_unchecked(pos + 1) as u64);
-            let ipsv = L::new(*ipsis.get_unchecked(pos) as u64, *ipsis.get_unchecked(pos + 1) as u64);
+            let ipv = L::new(*ipsi.get_unchecked(pos), *ipsi.get_unchecked(pos + 1));
+            let ipsv = L::new(*ipsis.get_unchecked(pos), *ipsis.get_unchecked(pos + 1));
             redp_l(shoup_lazy_lv(o, ipv, ipsv, pv), pv)
         };
         L::store(xp.add(j), pw(o0, j));
@@ -727,7 +727,7 @@ unsafe fn boundary_simd(xab: &[L; N], out: &mut [u64; N], t: &PrimeTables) {
             L::store(tcp.add(k), mont_mul_l(av, bv, pv, pinvv, maskv));
             k += 2;
         }
-        dit_l1_in2p(&mut tc, jc, jcs, p, p2);
+        dit_l1_in2p(&mut tc, jc as u32, jcs as u32, p, p2);
         dit_l4_v(&mut tc, &t.iw, &t.iws, jcv, jcsv, pv, p2v);
         for k in 0..16 {
             *out.get_unchecked_mut(i + k) = *tc.get_unchecked(k);
