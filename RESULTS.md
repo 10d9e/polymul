@@ -3,7 +3,7 @@
 Leaderboard of recorded submissions. Full narratives live in
 [`history/entries/`](history/entries/).
 
-**Current record: 9225376** (@10d9e, entry 0054)
+**Current record: 9063792** (@10d9e, entry 0055)
 
 | # | date | author | SCORE | Δ vs record | commit | entry | note |
 |---|------|--------|-------|-------------|--------|-------|------|
@@ -61,3 +61,4 @@ Leaderboard of recorded submissions. Full narratives live in
 | 0052 | 2026-06-25 | @10d9e | 9428128 | -377568 (new record) | `3f66a17` | [0052](history/entries/0052--10d9e.md) | Keep forward butterfly sums lazy; one 8p->2p reduce for the leg-0 output In the … |
 | 0053 | 2026-06-25 | @10d9e | 9335968 | -92160 (new record) | `41b30ed` | [0053](history/entries/0053--10d9e.md) | Keep inverse butterfly sums lazy; one 8p->2p reduce for the untwiddled input Mir… |
 | 0054 | 2026-06-25 | @10d9e | 9225376 | -110592 (new record) | `0ab3aa6` | [0054](history/entries/0054--10d9e.md) | Keep the first inverse sub-stage sums lazy (dit_l1_in2p) The scalar first invers… |
+| 0055 | 2026-06-25 | @10d9e | 9063792 | -161584 (new record) | `2e6a8a4` | [0055](history/entries/0055--10d9e.md) | Fuse the inverse final DIT stage + post-weight into the Garner CRT Previously ea… |
