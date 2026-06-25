@@ -3,7 +3,7 @@
 Leaderboard of recorded submissions. Full narratives live in
 [`history/entries/`](history/entries/).
 
-**Current record: 9014640** (@10d9e, entry 0056)
+**Current record: 8957488** (@10d9e, entry 0057)
 
 | # | date | author | SCORE | Δ vs record | commit | entry | note |
 |---|------|--------|-------|-------------|--------|-------|------|
@@ -63,3 +63,4 @@ Leaderboard of recorded submissions. Full narratives live in
 | 0054 | 2026-06-25 | @10d9e | 9225376 | -110592 (new record) | `0ab3aa6` | [0054](history/entries/0054--10d9e.md) | Keep the first inverse sub-stage sums lazy (dit_l1_in2p) The scalar first invers… |
 | 0055 | 2026-06-25 | @10d9e | 9063792 | -161584 (new record) | `2e6a8a4` | [0055](history/entries/0055--10d9e.md) | Fuse the inverse final DIT stage + post-weight into the Garner CRT Previously ea… |
 | 0056 | 2026-06-25 | @10d9e | 9014640 | -49152 (new record) | `a350dbf` | [0056](history/entries/0056--10d9e.md) | Skip the post-weight reduction for the P1/P2 residues in the fused CRT Only the … |
+| 0057 | 2026-06-25 | @10d9e | 8957488 | -57152 (new record) | `3ba9e57` | [0057](history/entries/0057--10d9e.md) | Pack the (a,b) input operands into lane pairs once, shared by all three primes T… |
