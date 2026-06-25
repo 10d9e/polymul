@@ -117,14 +117,15 @@ fn red2p(a: u64, p: u64) -> u64 {
     }
 }
 
-/// Montgomery product (R = 2^32): returns a*b*R^{-1} mod p in [0,2p), division-free
-/// (the final conditional subtraction is omitted — the consumer reduces lazily).
-/// `pinv = -p^{-1} mod 2^32`. Inputs a,b < 2p < 2^32, so a*b < 4p^2 < p*R.
+/// Vectorized Montgomery product, two independent products per i64x2 (lane k holds
+/// `a_k*b_k*R^{-1} mod p` in [0,2p)). `maskv = splat(0xffffffff)`, `pinvv =
+/// splat(-p^{-1} mod 2^32)`. Inputs a,b < 2p < 2^32 so a*b < 4p^2 < p*R.
 #[inline(always)]
-fn mont_mul(a: u64, b: u64, p: u64, pinv: u32) -> u64 {
-    let t = a * b;
-    let m = (t as u32).wrapping_mul(pinv) as u64; // (t mod R) * (-p^{-1}) mod R
-    (t + m * p) >> 32 // exact /R, result in [0,2p)
+unsafe fn mont_mul_l(a: L, b: L, pv: L, pinvv: L, maskv: L) -> L {
+    let t = a.mul(b); // low 64 of a*b (exact, < p*R)
+    let tlo = t.and(maskv); // t mod R
+    let m = tlo.mul(pinvv).and(maskv); // (t mod R) * (-p^{-1}) mod R
+    t.add(m.mul(pv)).shr32() // exact /R, result in [0,2p)
 }
 
 // ---------------------------------------------------------------------------
@@ -210,6 +211,20 @@ impl L {
     unsafe fn store(p: *mut u64, v: L) {
         v128_store(p as *mut v128, v.0);
     }
+    #[inline]
+    #[target_feature(enable = "simd128")]
+    unsafe fn and(self, o: L) -> L {
+        L(v128_and(self.0, o.0))
+    }
+    /// Deinterleave: returns (lane0 of x, lane0 of y) and (lane1 of x, lane1 of y).
+    #[inline]
+    #[target_feature(enable = "simd128")]
+    unsafe fn unzip(x: L, y: L) -> (L, L) {
+        (
+            L(i64x2_shuffle::<0, 2>(x.0, y.0)),
+            L(i64x2_shuffle::<1, 3>(x.0, y.0)),
+        )
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -274,6 +289,14 @@ impl L {
     unsafe fn store(p: *mut u64, v: L) {
         *p = v.0;
         *p.add(1) = v.1;
+    }
+    #[inline(always)]
+    unsafe fn and(self, o: L) -> L {
+        L(self.0 & o.0, self.1 & o.1)
+    }
+    #[inline(always)]
+    unsafe fn unzip(x: L, y: L) -> (L, L) {
+        (L(x.0, y.0), L(x.1, y.1))
     }
 }
 
@@ -686,7 +709,8 @@ unsafe fn boundary_simd(xab: &[L; N], out: &mut [u64; N], t: &PrimeTables) {
     let (jc, jcs) = (t.iw[N / 4], t.iws[N / 4]); // inverse 4th root J
     let jcv = L::splat(jc as u64);
     let jcsv = L::splat(jcs as u64);
-    let pinv = t.pinv;
+    let pinvv = L::splat(t.pinv as u64);
+    let maskv = L::splat(0xffff_ffff);
     let mut i = 0;
     while i < N {
         let mut ta = [L::splat(0); 16];
@@ -695,11 +719,16 @@ unsafe fn boundary_simd(xab: &[L; N], out: &mut [u64; N], t: &PrimeTables) {
         }
         dif_l4_v(&mut ta, &t.w, &t.ws, icf, icfs, pv, p2v);
         dif_l1_v(&mut ta, icf, icfs, pv, p2v);
-        // Pointwise: combine the two lanes (a*b) into a single Montgomery product.
+        // Pointwise: a*b per position. Deinterleave the packed (a,b) lanes of two
+        // adjacent positions into an a-vector and a b-vector, then one vector
+        // Montgomery product yields both products contiguously.
         let mut tc = [0u64; 16];
-        for k in 0..16 {
-            let v = *ta.get_unchecked(k);
-            *tc.get_unchecked_mut(k) = mont_mul(v.lane0(), v.lane1(), p, pinv);
+        let tcp = tc.as_mut_ptr();
+        let mut k = 0;
+        while k < 16 {
+            let (av, bv) = L::unzip(*ta.get_unchecked(k), *ta.get_unchecked(k + 1));
+            L::store(tcp.add(k), mont_mul_l(av, bv, pv, pinvv, maskv));
+            k += 2;
         }
         dit_l1_in2p(&mut tc, jc, jcs, p, p2);
         dit_l4_v(&mut tc, &t.iw, &t.iws, jcv, jcsv, pv, p2v);
