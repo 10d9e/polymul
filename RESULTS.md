@@ -3,7 +3,7 @@
 Leaderboard of recorded submissions. Full narratives live in
 [`history/entries/`](history/entries/).
 
-**Current record: 22469088** (@10d9e, entry 0034)
+**Current record: 22256096** (@10d9e, entry 0035)
 
 | # | date | author | SCORE | Δ vs record | commit | entry | note |
 |---|------|--------|-------|-------------|--------|-------|------|
@@ -41,3 +41,4 @@ Leaderboard of recorded submissions. Full narratives live in
 | 0032 | 2026-06-24 | @10d9e | 23663280 | -551952 (new record) | `8cff969` | [0032](history/entries/0032--10d9e.md) | Fold the psi inverse post-weight into the last DIT stage The final inverse DIT s… |
 | 0033 | 2026-06-24 | @10d9e | 23022048 | -641232 (new record) | `2aae85f` | [0033](history/entries/0033--10d9e.md) | Fold the psi pre-weight into the first forward DIF stage The negacyclic psi^j pr… |
 | 0034 | 2026-06-25 | @10d9e | 22469088 | -552960 (new record) | `16c8edf` | [0034](history/entries/0034--10d9e.md) | Drop the redundant s3 reduction in every butterfly The difference term s3 = b + … |
+| 0035 | 2026-06-25 | @10d9e | 22256096 | -212992 (new record) | `39100b6` | [0035](history/entries/0035--10d9e.md) | Lean Garner CRT: drop the eager reductions Shoup makes unnecessary Shoup accepts… |
