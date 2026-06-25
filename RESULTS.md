@@ -3,7 +3,7 @@
 Leaderboard of recorded submissions. Full narratives live in
 [`history/entries/`](history/entries/).
 
-**Current record: 9428128** (@10d9e, entry 0052)
+**Current record: 9335968** (@10d9e, entry 0053)
 
 | # | date | author | SCORE | Δ vs record | commit | entry | note |
 |---|------|--------|-------|-------------|--------|-------|------|
@@ -59,3 +59,4 @@ Leaderboard of recorded submissions. Full narratives live in
 | 0050 | 2026-06-25 | @10d9e | 9855056 | -1176576 (new record) | `6a23f65` | [0050](history/entries/0050--10d9e.md) | Replace Shoup with Plantard multiplication throughout the NTT Every constant mod… |
 | 0051 | 2026-06-25 | @10d9e | 9805696 | -49360 (new record) | `a2f4a5e` | [0051](history/entries/0051--10d9e.md) | Use Plantard for the Garner CRT modular multiplies too The three constant modula… |
 | 0052 | 2026-06-25 | @10d9e | 9428128 | -377568 (new record) | `3f66a17` | [0052](history/entries/0052--10d9e.md) | Keep forward butterfly sums lazy; one 8p->2p reduce for the leg-0 output In the … |
+| 0053 | 2026-06-25 | @10d9e | 9335968 | -92160 (new record) | `41b30ed` | [0053](history/entries/0053--10d9e.md) | Keep inverse butterfly sums lazy; one 8p->2p reduce for the untwiddled input Mir… |
