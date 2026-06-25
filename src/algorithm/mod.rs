@@ -813,42 +813,63 @@ unsafe fn dit4_middle(x: &mut [u64; N], t: &PrimeTables, jcp: u64) {
     let cav = L::splat((1u64 << 32) + 2);
     let jcpv = L::splat(jcp);
     let xp = x.as_mut_ptr();
-    dit_mid_stage::<16>(xp, 16, &t.m16, pv, p2v, cav, jcpv);
-    dit_mid_stage::<64>(xp, 64, &t.m64, pv, p2v, cav, jcpv);
-}
-
-/// One strided inverse DIT stage (half-block `len`). Butterfly-outer loop: the per-lane
-/// twiddles depend only on the column `j`, so each adjacent pair (j, j+1) is loaded once
-/// (one `L::load` per twiddle from the compact `m` tables) and reused across the inner
-/// block loop.
-#[allow(clippy::too_many_arguments)]
-#[inline(always)]
-unsafe fn dit_mid_stage<const M: usize>(
-    xp: *mut u64, len: usize, m: &[[u64; M]; 3], pv: L, p2v: L, cav: L, jcpv: L,
-) {
-    let (m0, m1, m2) = (m[0].as_ptr(), m[1].as_ptr(), m[2].as_ptr());
-    let mut j = 0;
-    while j < len {
-        let t1p = L::load(m0.add(j));
-        let t2p = L::load(m1.add(j));
-        let t3p = L::load(m2.add(j));
+    // The two strided inverse stages (half-blocks 16 then 64) are fused into ONE radix-16
+    // pass, halving the section's memory round-trips (mirror of the forward fusion). Two
+    // adjacent columns (jj, jj+1) ride the two lanes; the 16-element tile is held in named
+    // locals so it scalarizes under the strided gather; twiddles are column(jj)-outer.
+    let (m0, m1, m2) = (t.m16[0].as_ptr(), t.m16[1].as_ptr(), t.m16[2].as_ptr());
+    let (n0, n1, n2) = (t.m64[0].as_ptr(), t.m64[1].as_ptr(), t.m64[2].as_ptr());
+    let mut jj = 0;
+    while jj < 16 {
+        // sub-stage A (len=16) twiddle: column pair (jj, jj+1), shared by the 4 m-groups.
+        let aw = (L::load(m0.add(jj)), L::load(m1.add(jj)), L::load(m2.add(jj)));
+        // sub-stage B (len=64) twiddles: column pair (jj+16k, jj+16k+1) per group k.
+        let bw = |k: usize| {
+            let c = jj + 16 * k;
+            (L::load(n0.add(c)), L::load(n1.add(c)), L::load(n2.add(c)))
+        };
+        let (bw0, bw1, bw2, bw3) = (bw(0), bw(1), bw(2), bw(3));
         let mut i = 0;
         while i < N {
-            let base = i + j;
-            let a = L::load(xp.add(base));
-            let b = L::load(xp.add(base + len));
-            let c = L::load(xp.add(base + 2 * len));
-            let d = L::load(xp.add(base + 3 * len));
-            let (o0, o1, o2, o3) =
-                r4_lazy_dit_l(a, b, c, d, pv, p2v, cav, jcpv, t1p, t2p, t3p);
-            L::store(xp.add(base), o0);
-            L::store(xp.add(base + len), o1);
-            L::store(xp.add(base + 2 * len), o2);
-            L::store(xp.add(base + 3 * len), o3);
-            i += 4 * len;
+            r16_dit_tile(xp.add(i + jj), aw, bw0, bw1, bw2, bw3, jcpv, pv, p2v, cav);
+            i += 256;
         }
-        j += 2;
+        jj += 2;
     }
+}
+
+/// Fused radix-16 = radix-4(len=16) ∘ radix-4(len=64) inverse DIT butterfly on the 16
+/// elements at `p[0], p[16], …, p[240]` (each an adjacent-column lane pair). The tile is
+/// held in 16 named locals so it stays in registers under the strided gather/scatter.
+/// Sub-stage A (len=16) groups {4m..4m+3} share twiddle `aw`; sub-stage B (len=64) groups
+/// {k,k+4,k+8,k+12} use `bwk`.
+#[allow(clippy::too_many_arguments)]
+#[inline(always)]
+unsafe fn r16_dit_tile(
+    p: *mut u64, aw: (L, L, L), bw0: (L, L, L), bw1: (L, L, L), bw2: (L, L, L), bw3: (L, L, L),
+    jcpv: L, pv: L, p2v: L, cav: L,
+) {
+    let g = |q: usize| L::load(p.add(q * 16));
+    let (mut t0, mut t1, mut t2, mut t3) = (g(0), g(1), g(2), g(3));
+    let (mut t4, mut t5, mut t6, mut t7) = (g(4), g(5), g(6), g(7));
+    let (mut t8, mut t9, mut t10, mut t11) = (g(8), g(9), g(10), g(11));
+    let (mut t12, mut t13, mut t14, mut t15) = (g(12), g(13), g(14), g(15));
+    let r = |a, b, c, d, tw: (L, L, L)| r4_lazy_dit_l(a, b, c, d, pv, p2v, cav, jcpv, tw.0, tw.1, tw.2);
+    // sub-stage A (len=16): contiguous-in-tile groups {4m..4m+3}, shared twiddle.
+    let (a, b, c, d) = r(t0, t1, t2, t3, aw); t0 = a; t1 = b; t2 = c; t3 = d;
+    let (a, b, c, d) = r(t4, t5, t6, t7, aw); t4 = a; t5 = b; t6 = c; t7 = d;
+    let (a, b, c, d) = r(t8, t9, t10, t11, aw); t8 = a; t9 = b; t10 = c; t11 = d;
+    let (a, b, c, d) = r(t12, t13, t14, t15, aw); t12 = a; t13 = b; t14 = c; t15 = d;
+    // sub-stage B (len=64): stride-4-in-tile groups {k,k+4,k+8,k+12}, twiddle per k.
+    let (a, b, c, d) = r(t0, t4, t8, t12, bw0); t0 = a; t4 = b; t8 = c; t12 = d;
+    let (a, b, c, d) = r(t1, t5, t9, t13, bw1); t1 = a; t5 = b; t9 = c; t13 = d;
+    let (a, b, c, d) = r(t2, t6, t10, t14, bw2); t2 = a; t6 = b; t10 = c; t14 = d;
+    let (a, b, c, d) = r(t3, t7, t11, t15, bw3); t3 = a; t7 = b; t11 = c; t15 = d;
+    let mut s = |q: usize, v: L| L::store(p.add(q * 16), v);
+    s(0, t0); s(1, t1); s(2, t2); s(3, t3);
+    s(4, t4); s(5, t5); s(6, t6); s(7, t7);
+    s(8, t8); s(9, t9); s(10, t10); s(11, t11);
+    s(12, t12); s(13, t13); s(14, t14); s(15, t15);
 }
 
 /// Final inverse DIT stage (half-block 256, step=1) + psi^{-1}*N^{-1} post-weight for ONE
