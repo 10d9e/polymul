@@ -752,7 +752,7 @@ unsafe fn dit4_middle(x: &mut [u64; N], iwp: &[u64; N], jcp: u64, p: u64) {
 /// touching memory.
 #[inline]
 #[cfg_attr(target_arch = "wasm32", target_feature(enable = "simd128"))]
-unsafe fn final_prime(t: &PrimeTables, x: &[u64; N], j: usize, cav: L) -> (L, L, L, L) {
+unsafe fn final_prime(t: &PrimeTables, x: &[u64; N], j: usize, cav: L, red: bool) -> (L, L, L, L) {
     let p = t.p;
     let pv = L::splat(p);
     let p2v = L::splat(p << 1);
@@ -771,7 +771,13 @@ unsafe fn final_prime(t: &PrimeTables, x: &[u64; N], j: usize, cav: L) -> (L, L,
     let (o0, o1, o2, o3) =
         r4_lazy_dit_l_final(a, b, c, d, pv, p2v, p4v, cav, jcpv, t1p, t2p, t3p);
     let ipp = t.ipsip.as_ptr();
-    let pw = |o: L, pos: usize| -> L { redp_l(plantard_lv(o, L::load(ipp.add(pos)), pv, cav), pv) };
+    // `red` (only the P0 prime, whose residue becomes the exact CRT digit v0) reduces
+    // to [0,p); P1/P2 residues only feed Plantard multiplies in the CRT, which tolerate
+    // [0,2p), so they skip the conditional subtract.
+    let pw = |o: L, pos: usize| -> L {
+        let r = plantard_lv(o, L::load(ipp.add(pos)), pv, cav);
+        if red { redp_l(r, pv) } else { r }
+    };
     (pw(o0, j), pw(o1, j + N / 4), pw(o2, j + N / 2), pw(o3, j + 3 * N / 4))
 }
 
@@ -894,9 +900,9 @@ unsafe fn final_crt(x0: &[u64; N], x1: &[u64; N], x2: &[u64; N], plan: &Plan, re
     let rp = res.as_mut_ptr();
     let mut j = 0;
     while j < N / 4 {
-        let (a0, a1, a2, a3) = final_prime(&plan.t[0], x0, j, cav);
-        let (b0, b1, b2, b3) = final_prime(&plan.t[1], x1, j, cav);
-        let (c0, c1, c2, c3) = final_prime(&plan.t[2], x2, j, cav);
+        let (a0, a1, a2, a3) = final_prime(&plan.t[0], x0, j, cav, true);
+        let (b0, b1, b2, b3) = final_prime(&plan.t[1], x1, j, cav, false);
+        let (c0, c1, c2, c3) = final_prime(&plan.t[2], x2, j, cav, false);
         let put = |pos: usize, out: L| {
             *rp.add(pos) = out.lane0() as u32;
             *rp.add(pos + 1) = out.lane1() as u32;
