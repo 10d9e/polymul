@@ -3,7 +3,7 @@
 Leaderboard of recorded submissions. Full narratives live in
 [`history/entries/`](history/entries/).
 
-**Current record: 9855056** (@10d9e, entry 0050)
+**Current record: 9805696** (@10d9e, entry 0051)
 
 | # | date | author | SCORE | Δ vs record | commit | entry | note |
 |---|------|--------|-------|-------------|--------|-------|------|
@@ -57,3 +57,4 @@ Leaderboard of recorded submissions. Full narratives live in
 | 0048 | 2026-06-25 | @10d9e | 11519216 | -55200 (new record) | `fbf3261` | [0048](history/entries/0048--10d9e.md) | Drop internal reductions in the final inverse DIT stage The final inverse DIT st… |
 | 0049 | 2026-06-25 | @10d9e | 11031632 | -487584 (new record) | `5b28709` | [0049](history/entries/0049--10d9e.md) | Hoist stage twiddle loads out of the block loop (butterfly-outer iteration) In b… |
 | 0050 | 2026-06-25 | @10d9e | 9855056 | -1176576 (new record) | `6a23f65` | [0050](history/entries/0050--10d9e.md) | Replace Shoup with Plantard multiplication throughout the NTT Every constant mod… |
+| 0051 | 2026-06-25 | @10d9e | 9805696 | -49360 (new record) | `a2f4a5e` | [0051](history/entries/0051--10d9e.md) | Use Plantard for the Garner CRT modular multiplies too The three constant modula… |
