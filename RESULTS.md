@@ -3,7 +3,7 @@
 Leaderboard of recorded submissions. Full narratives live in
 [`history/entries/`](history/entries/).
 
-**Current record: 13474592** (@10d9e, entry 0042)
+**Current record: 13039472** (@10d9e, entry 0043)
 
 | # | date | author | SCORE | Δ vs record | commit | entry | note |
 |---|------|--------|-------|-------------|--------|-------|------|
@@ -49,3 +49,4 @@ Leaderboard of recorded submissions. Full narratives live in
 | 0040 | 2026-06-25 | @10d9e | 16335488 | -4756128 (new record) | `9c10612` | [0040](history/entries/0040--10d9e.md) | The forward NTT multiplies BOTH operands a and b by the SAME twiddle factors in … |
 | 0041 | 2026-06-25 | @10d9e | 14113408 | -2222080 (new record) | `4b974da` | [0041](history/entries/0041--10d9e.md) | Vectorize the inverse DIT transform the same way the forward already is, but pai… |
 | 0042 | 2026-06-25 | @10d9e | 13474592 | -638816 (new record) | `3cea8ea` | [0042](history/entries/0042--10d9e.md) | Vectorize the Garner CRT reconstruction. The three per-prime residue arrays r0,r… |
+| 0043 | 2026-06-25 | @10d9e | 13039472 | -435120 (new record) | `036eac5` | [0043](history/entries/0043--10d9e.md) | Vectorize the second inverse DIT sub-stage (dit_l4) inside the fused boundary ti… |
