@@ -317,6 +317,12 @@ unsafe fn red2p_l(a: L, p2v: L) -> L {
     L::select(m, t, a)
 }
 
+/// Lanewise reduce [0,8p) -> [0,2p) in two conditional-subtract steps.
+#[inline(always)]
+unsafe fn red8p_l(a: L, p2v: L, p4v: L) -> L {
+    red2p_l(red2p_l(a, p4v), p2v)
+}
+
 /// Plantard modular multiply by a precomputed constant: `bpv` lanes hold
 /// `bprime = (c * (-2^64 mod q) mod q) * q^{-1} mod 2^64`. For any non-negative input
 /// `x < 8q` this returns `x*c mod q` represented in [0,2q) — a drop-in replacement for
@@ -358,16 +364,21 @@ unsafe fn r4_lazy_dit_l(
     a: L, b: L, c: L, d: L, pv: L, p2v: L, cav: L, jcp: L,
     t1p: L, t2p: L, t3p: L,
 ) -> (L, L, L, L) {
-    let a = red2p_l(a, p2v); // [0,4p) -> [0,2p)
+    // Inputs are [0,8p): only the untwiddled `a` is reduced (one 8p->2p two-step); the
+    // twiddled b,c,d go through Plantard (tolerates < 8p). The s0/s1/s2 sums stay lazy
+    // in [0,4p) and the outputs (in [0,8p)) are consumed by the next stage's `a`
+    // reduction or its Plantards — so no per-sum reductions are needed.
+    let p4v = p2v.add(p2v);
+    let a = red8p_l(a, p2v, p4v);
     let b = plantard_lv(b, t1p, pv, cav);
     let c = plantard_lv(c, t2p, pv, cav);
     let d = plantard_lv(d, t3p, pv, cav);
-    let s0 = red2p_l(a.add(c), p2v);
-    let s1 = red2p_l(a.add(p2v).sub(c), p2v);
-    let s2 = red2p_l(b.add(d), p2v);
-    let s3 = b.add(p2v).sub(d); // [0,4p); feeds only the lazy Plantard
+    let s0 = a.add(c); // [0,4p)
+    let s1 = a.add(p2v).sub(c); // [0,4p)
+    let s2 = b.add(d); // [0,4p)
+    let s3 = b.add(p2v).sub(d); // [0,4p)
     let js3 = plantard_lv(s3, jcp, pv, cav);
-    (s0.add(s2), s1.add(js3), s0.add(p2v).sub(s2), s1.add(p2v).sub(js3))
+    (s0.add(s2), s1.add(js3), s0.add(p4v).sub(s2), s1.add(p2v).sub(js3))
 }
 
 /// Final inverse DIT butterfly: identical to `r4_lazy_dit_l` but the s0/s1/s2
@@ -381,7 +392,7 @@ unsafe fn r4_lazy_dit_l_final(
     a: L, b: L, c: L, d: L, pv: L, p2v: L, p4v: L, cav: L, jcp: L,
     t1p: L, t2p: L, t3p: L,
 ) -> (L, L, L, L) {
-    let a = red2p_l(a, p2v); // [0,4p) -> [0,2p)
+    let a = red8p_l(a, p2v, p4v); // [0,8p) -> [0,2p)
     let b = plantard_lv(b, t1p, pv, cav);
     let c = plantard_lv(c, t2p, pv, cav);
     let d = plantard_lv(d, t3p, pv, cav);
