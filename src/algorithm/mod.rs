@@ -449,6 +449,28 @@ fn r4_lazy_dit(
     )
 }
 
+/// Like `r4_lazy_dit` but returns the outputs UNREDUCED (in [0,4p)). Used only by
+/// the final DIT stage, whose outputs feed the post-weight Shoup (which accepts
+/// any input < 2^32), so the four output reductions are unnecessary there.
+#[allow(clippy::too_many_arguments)]
+#[inline(always)]
+fn r4_lazy_dit_raw(
+    a: u64, mut b: u64, mut c: u64, mut d: u64, p: u64, p2: u64, jc: u32, jcs: u32, triv: bool,
+    t1c: u32, t1s: u32, t2c: u32, t2s: u32, t3c: u32, t3s: u32,
+) -> (u64, u64, u64, u64) {
+    if !triv {
+        b = shoup_lazy(b, t1c, t1s, p);
+        c = shoup_lazy(c, t2c, t2s, p);
+        d = shoup_lazy(d, t3c, t3s, p);
+    }
+    let s0 = red2p(a + c, p);
+    let s1 = red2p(a + p2 - c, p);
+    let s2 = red2p(b + d, p);
+    let s3 = b + p2 - d;
+    let js3 = shoup_lazy(s3, jc, jcs, p);
+    (s0 + s2, s1 + js3, s0 + p2 - s2, s1 + p2 - js3) // each in [0,4p)
+}
+
 /// Fused first two inverse DIT stages (half-block sizes 1 then 4) on one contiguous
 /// 16-element tile in registers — one memory pass instead of two. The second fused
 /// stage uses the inverse 16th-root twiddles iw^{64*g} (already in the `iw` table).
@@ -558,7 +580,7 @@ fn dit4(
         unsafe {
             let e = j; // step = 1 at the last stage
             let (it1c, it1s, it2c, it2s, it3c, it3s) = twiddles3(iw, iws, e);
-            let (o0, o1, o2, o3) = r4_lazy_dit(
+            let (o0, o1, o2, o3) = r4_lazy_dit_raw(
                 *x.get_unchecked(j),
                 *x.get_unchecked(j + N / 4),
                 *x.get_unchecked(j + N / 2),
