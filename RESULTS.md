@@ -3,7 +3,7 @@
 Leaderboard of recorded submissions. Full narratives live in
 [`history/entries/`](history/entries/).
 
-**Current record: 22108640** (@10d9e, entry 0036)
+**Current record: 21850448** (@10d9e, entry 0037)
 
 | # | date | author | SCORE | Δ vs record | commit | entry | note |
 |---|------|--------|-------|-------------|--------|-------|------|
@@ -43,3 +43,4 @@ Leaderboard of recorded submissions. Full narratives live in
 | 0034 | 2026-06-25 | @10d9e | 22469088 | -552960 (new record) | `16c8edf` | [0034](history/entries/0034--10d9e.md) | Drop the redundant s3 reduction in every butterfly The difference term s3 = b + … |
 | 0035 | 2026-06-25 | @10d9e | 22256096 | -212992 (new record) | `39100b6` | [0035](history/entries/0035--10d9e.md) | Lean Garner CRT: drop the eager reductions Shoup makes unnecessary Shoup accepts… |
 | 0036 | 2026-06-25 | @10d9e | 22108640 | -147456 (new record) | `c76126a` | [0036](history/entries/0036--10d9e.md) | Drop output reductions in the final DIT stage (post-weight absorbs them) The las… |
+| 0037 | 2026-06-25 | @10d9e | 21850448 | -258192 (new record) | `34c1f0f` | [0037](history/entries/0037--10d9e.md) | Harvey-lazy inverse DIT: keep values in [0,4p), reduce only the untwiddled input… |
