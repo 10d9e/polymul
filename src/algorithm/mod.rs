@@ -549,34 +549,6 @@ unsafe fn dif_l1_v(t: &mut [L; 16], ic: u32, ics: u32, pv: L, p2v: L) {
     }
 }
 
-/// One inverse radix-4 DIT butterfly, Harvey-lazy: inputs and outputs in [0,4p).
-/// The twiddled inputs go through `shoup_lazy` (which tolerates < 2^32) so only the
-/// untwiddled input `a` (and, for a trivial butterfly, b,c,d) needs reducing; the
-/// four outputs stay unreduced in [0,4p). Outputs are for offsets +0,+len,+2len,+3len.
-#[allow(clippy::too_many_arguments)]
-#[inline(always)]
-fn r4_lazy_dit(
-    a: u64, mut b: u64, mut c: u64, mut d: u64, p: u64, p2: u64, jc: u32, jcs: u32, triv: bool,
-    t1c: u32, t1s: u32, t2c: u32, t2s: u32, t3c: u32, t3s: u32,
-) -> (u64, u64, u64, u64) {
-    let a = red2p(a, p); // [0,4p) -> [0,2p)
-    if triv {
-        b = red2p(b, p);
-        c = red2p(c, p);
-        d = red2p(d, p);
-    } else {
-        b = shoup_lazy(b, t1c, t1s, p); // [0,4p) input -> [0,2p)
-        c = shoup_lazy(c, t2c, t2s, p);
-        d = shoup_lazy(d, t3c, t3s, p);
-    }
-    let s0 = red2p(a + c, p);
-    let s1 = red2p(a + p2 - c, p);
-    let s2 = red2p(b + d, p);
-    let s3 = b + p2 - d; // in [0,4p); feeds only the lazy Shoup
-    let js3 = shoup_lazy(s3, jc, jcs, p);
-    (s0 + s2, s1 + js3, s0 + p2 - s2, s1 + p2 - js3) // each in [0,4p), unreduced
-}
-
 /// Scalar lazy Shoup (single value), used by the inverse DIT. Result in [0,2p).
 #[inline(always)]
 fn shoup_lazy(x: u64, c: u32, cs: u32, p: u64) -> u64 {
@@ -606,19 +578,27 @@ unsafe fn dit_l1_in2p(t: &mut [u64; 16], jc: u32, jcs: u32, p: u64, p2: u64) {
     }
 }
 
+/// Second inverse DIT sub-stage on a 16-element tile (stride 4). The four
+/// butterflies g=0..3 sit at adjacent slots for every radix-4 leg (g, g+4, g+8,
+/// g+12), so a pair (g, g+1) rides the two lanes with contiguous v128 loads; the
+/// two lanes' twiddles (e=64g, 64(g+1)) are loaded as pairs.
 #[inline(always)]
-unsafe fn dit_l4(t: &mut [u64; 16], iw: &[u32; N], iws: &[u32; N], jc: u32, jcs: u32, p: u64, p2: u64) {
-    for g in 0..4 {
-        let e = 64 * g;
-        let (it1c, it1s, it2c, it2s, it3c, it3s) = twiddles3(iw, iws, e);
-        let (o0, o1, o2, o3) = r4_lazy_dit(
-            *t.get_unchecked(g), *t.get_unchecked(g + 4), *t.get_unchecked(g + 8),
-            *t.get_unchecked(g + 12), p, p2, jc, jcs, e == 0, it1c, it1s, it2c, it2s, it3c, it3s,
-        );
-        *t.get_unchecked_mut(g) = o0;
-        *t.get_unchecked_mut(g + 4) = o1;
-        *t.get_unchecked_mut(g + 8) = o2;
-        *t.get_unchecked_mut(g + 12) = o3;
+unsafe fn dit_l4_v(t: &mut [u64; 16], iw: &[u32; N], iws: &[u32; N], jcv: L, jcsv: L, pv: L, p2v: L) {
+    let tp = t.as_mut_ptr();
+    let mut g = 0;
+    while g < 4 {
+        let (t1c, t1s, t2c, t2s, t3c, t3s) = twiddles3_l(iw, iws, 64 * g, 64 * (g + 1));
+        let a = L::load(tp.add(g));
+        let b = L::load(tp.add(g + 4));
+        let c = L::load(tp.add(g + 8));
+        let d = L::load(tp.add(g + 12));
+        let (o0, o1, o2, o3) =
+            r4_lazy_dit_l(a, b, c, d, pv, p2v, jcv, jcsv, t1c, t1s, t2c, t2s, t3c, t3s);
+        L::store(tp.add(g), o0);
+        L::store(tp.add(g + 4), o1);
+        L::store(tp.add(g + 8), o2);
+        L::store(tp.add(g + 12), o3);
+        g += 2;
     }
 }
 
@@ -704,6 +684,8 @@ unsafe fn boundary_simd(xab: &[L; N], out: &mut [u64; N], t: &PrimeTables) {
     let p2v = L::splat(p2);
     let (icf, icfs) = (t.w[N / 4], t.ws[N / 4]); // forward 4th root I
     let (jc, jcs) = (t.iw[N / 4], t.iws[N / 4]); // inverse 4th root J
+    let jcv = L::splat(jc as u64);
+    let jcsv = L::splat(jcs as u64);
     let pinv = t.pinv;
     let mut i = 0;
     while i < N {
@@ -720,7 +702,7 @@ unsafe fn boundary_simd(xab: &[L; N], out: &mut [u64; N], t: &PrimeTables) {
             *tc.get_unchecked_mut(k) = mont_mul(v.lane0(), v.lane1(), p, pinv);
         }
         dit_l1_in2p(&mut tc, jc, jcs, p, p2);
-        dit_l4(&mut tc, &t.iw, &t.iws, jc, jcs, p, p2);
+        dit_l4_v(&mut tc, &t.iw, &t.iws, jcv, jcsv, pv, p2v);
         for k in 0..16 {
             *out.get_unchecked_mut(i + k) = *tc.get_unchecked(k);
         }
