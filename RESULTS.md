@@ -3,7 +3,7 @@
 Leaderboard of recorded submissions. Full narratives live in
 [`history/entries/`](history/entries/).
 
-**Current record: 8009088** (@10d9e, entry 0062)
+**Current record: 7866000** (@10d9e, entry 0063)
 
 | # | date | author | SCORE | Δ vs record | commit | entry | note |
 |---|------|--------|-------|-------------|--------|-------|------|
@@ -69,3 +69,4 @@ Leaderboard of recorded submissions. Full narratives live in
 | 0060 | 2026-06-25 | @10d9e | 8668624 | -102400 (new record) | `6018015` | [0060](history/entries/0060--10d9e.md) | Vectorize pack_ab: build 4 (a,b) lane-pairs per iter via load+shuffle+widen The … |
 | 0061 | 2026-06-25 | @10d9e | 8325888 | -342736 (new record) | `eb51105` | [0061](history/entries/0061--10d9e.md) | Signed-tolerant Plantard (caddv 2^32+2): drop bias adds on difference legs The P… |
 | 0062 | 2026-06-25 | @10d9e | 8009088 | -316800 (new record) | `12ee91e` | [0062](history/entries/0062--10d9e.md) | Fuse forward len=64 + len=16 stages into one radix-16 pass The two strided radix… |
+| 0063 | 2026-06-25 | @10d9e | 7866000 | -143088 (new record) | `3b47dc4` | [0063](history/entries/0063--10d9e.md) | Fuse inverse len=16 + len=64 stages into one radix-16 pass Mirror of the forward… |
