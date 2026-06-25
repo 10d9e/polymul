@@ -67,6 +67,13 @@ struct PrimeTables {
     // load instead of two scattered scalar loads.
     iwp2: [u64; N / 2], // iwp2[j] = iwp[2j]
     iwp3: [u64; N / 2], // iwp3[j] = iwp[3j]  (note 3j < N for j < N/3; only j<N/4 used)
+    // Compact inverse middle-stage twiddles. The two strided inverse stages have
+    // PER-COLUMN twiddles (not constant-index like the boundary tile, so LLVM cannot
+    // hoist their loads), and pair adjacent columns (j, j+1) into the two lanes. Laid
+    // out contiguously here, `m16[k]`/`m64[k]` load an adjacent pair with one v128
+    // `L::load` instead of `twiddles3_l`'s two scattered scalar loads + lane build.
+    m16: [[u64; 16]; 3], // len=16 stage (step 16): m16[k][j] = iwp[(k+1)*16*j % N]
+    m64: [[u64; 64]; 3], // len=64 stage (step  4): m64[k][j] = iwp[(k+1)* 4*j % N]
     pinv: u32,       // -p^{-1} mod 2^32, for the Montgomery pointwise product
 }
 
@@ -283,9 +290,13 @@ impl L {
     }
     #[inline(always)]
     unsafe fn ge(self, o: L) -> L {
+        // SIGNED compare, matching wasm's `i64x2_ge`. For the unsigned lazy values
+        // (< 2^63) signed and unsigned agree; the signed-lazy difference legs (stored
+        // as two's-complement "negative" u64) must use the signed compare so the scalar
+        // correctness path stays bit-identical to the metered v128 path.
         L(
-            if self.0 >= o.0 { !0 } else { 0 },
-            if self.1 >= o.1 { !0 } else { 0 },
+            if (self.0 as i64) >= (o.0 as i64) { !0 } else { 0 },
+            if (self.1 as i64) >= (o.1 as i64) { !0 } else { 0 },
         )
     }
     #[inline(always)]
@@ -353,15 +364,19 @@ unsafe fn red8p_l(a: L, p2v: L, p4v: L) -> L {
 }
 
 /// Plantard modular multiply by a precomputed constant: `bpv` lanes hold
-/// `bprime = (c * (-2^64 mod q) mod q) * q^{-1} mod 2^64`. For any non-negative input
-/// `x < 8q` this returns `x*c mod q` represented in [0,2q) — a drop-in replacement for
-/// `shoup_lazy_lv` using only TWO multiplies (vs Shoup's three) and ONE constant load
-/// (vs two). `caddv = splat(2^32 + 1)` folds in both Plantard's rounding `+1` and the
-/// `+q` that shifts the centred result into [0,2q); `qv = splat(q)`.
+/// `bprime = (c * (-2^64 mod q) mod q) * q^{-1} mod 2^64`. Returns `x*c mod q` in [0,2q)
+/// — TWO multiplies (vs Shoup's three), ONE constant load (vs two).
+///
+/// `caddv = splat(2^32 + 2)`. Using `+2` (rather than the textbook `+1`) widens the
+/// EXACT input domain to BOTH `x` in `[0, 40q)` AND signed `x` in `(-32q, 40q)` — the
+/// signed half is the key: a difference leg `u - v` of two lazy operands can be fed to
+/// Plantard WITHOUT a `+kq` bias add to keep it non-negative. (Verified exhaustively for
+/// all three primes; our intermediates stay within `(-8q, 8q)`, far inside the domain.)
+/// The `+2` const still folds in Plantard's rounding and the `+q` un-centring.
 #[inline(always)]
 unsafe fn plantard_lv(x: L, bpv: L, qv: L, caddv: L) -> L {
-    let h = x.mul(bpv).ashr32(); // high 32 of x*bprime (signed)
-    h.add(caddv).mul(qv).shr32() // ((h + 2^32 + 1) * q) >> 32  in [0,2q)
+    let h = x.mul(bpv).ashr32(); // signed high 32 of x*bprime (sign-correct for x<0)
+    h.add(caddv).mul(qv).shr32() // ((h + 2^32 + 2) * q) >> 32  in [0,2q)
 }
 
 /// Lanewise reduce [0,2p) -> [0,p).
@@ -403,11 +418,14 @@ unsafe fn r4_lazy_dit_l(
     let c = plantard_lv(c, t2p, pv, cav);
     let d = plantard_lv(d, t3p, pv, cav);
     let s0 = a.add(c); // [0,4p)
-    let s1 = a.add(p2v).sub(c); // [0,4p)
+    let s1 = a.sub(c); // signed (-2p,2p)
     let s2 = b.add(d); // [0,4p)
-    let s3 = b.add(p2v).sub(d); // [0,4p)
-    let js3 = plantard_lv(s3, jcp, pv, cav);
-    (s0.add(s2), s1.add(js3), s0.add(p4v).sub(s2), s1.add(p2v).sub(js3))
+    let s3 = b.sub(d); // signed (-2p,2p); feeds the (signed-tolerant) Plantard
+    let js3 = plantard_lv(s3, jcp, pv, cav); // [0,2p)
+    // out0 (untwiddled) feeds the next stage's `a` reduction -> keep unsigned [0,8p).
+    // out1/out2/out3 feed the next stage's signed-tolerant Plantards -> keep SIGNED, so
+    // their difference legs need no bias add.
+    (s0.add(s2), s1.add(js3), s0.sub(s2), s1.sub(js3))
 }
 
 /// Final inverse DIT butterfly: identical to `r4_lazy_dit_l` but the s0/s1/s2
@@ -426,12 +444,13 @@ unsafe fn r4_lazy_dit_l_final(
     let c = plantard_lv(c, t2p, pv, cav);
     let d = plantard_lv(d, t3p, pv, cav);
     let s0 = a.add(c); // [0,4p)
-    let s1 = a.add(p2v).sub(c); // [0,4p)
+    let s1 = a.sub(c); // signed (-2p,2p)
     let s2 = b.add(d); // [0,4p)
-    let s3 = b.add(p2v).sub(d); // [0,4p)
-    let js3 = plantard_lv(s3, jcp, pv, cav);
-    // out2 subtracts s2 (< 4p) so it needs a 4p bias; out3 subtracts js3 (< 2p).
-    (s0.add(s2), s1.add(js3), s0.add(p4v).sub(s2), s1.add(p2v).sub(js3))
+    let s3 = b.sub(d); // signed (-2p,2p)
+    let js3 = plantard_lv(s3, jcp, pv, cav); // [0,2p)
+    // All four outputs feed only the signed-tolerant post-weight Plantard, so the
+    // difference legs stay SIGNED with no bias add.
+    (s0.add(s2), s1.add(js3), s0.sub(s2), s1.sub(js3))
 }
 
 fn build_tables(p: u64) -> PrimeTables {
@@ -458,6 +477,8 @@ fn build_tables(p: u64) -> PrimeTables {
         iwp: [0; N],
         iwp2: [0; N / 2],
         iwp3: [0; N / 2],
+        m16: [[0; 16]; 3],
+        m64: [[0; 64]; 3],
         pinv: inv.wrapping_neg(),
     };
 
@@ -484,6 +505,15 @@ fn build_tables(p: u64) -> PrimeTables {
     for j in 0..N / 2 {
         pt.iwp2[j] = pt.iwp[(2 * j) % N];
         pt.iwp3[j] = pt.iwp[(3 * j) % N];
+    }
+    for k in 0..3 {
+        let m = k + 1;
+        for j in 0..16 {
+            pt.m16[k][j] = pt.iwp[(m * 16 * j) % N];
+        }
+        for j in 0..64 {
+            pt.m64[k][j] = pt.iwp[(m * 4 * j) % N];
+        }
     }
     pt
 }
@@ -532,7 +562,7 @@ unsafe fn r4_lazy_l(
     a: L, b: L, c: L, d: L, pv: L, p2v: L, cav: L, icp: L, triv: bool,
     t1p: L, t2p: L, t3p: L,
 ) -> (L, L, L, L) {
-    let s3 = b.add(p2v).sub(d); // in [0,4p); feeds only the lazy Plantard
+    let s3 = b.sub(d); // signed (-2p,2p); feeds only the (signed-tolerant) Plantard
     let is3 = plantard_lv(s3, icp, pv, cav);
     if triv {
         // Trivial twiddles: outputs are red2p'd (not Plantard'd), so the sums must be
@@ -549,19 +579,20 @@ unsafe fn r4_lazy_l(
             red2p_l(s1.add(p2v).sub(is3), p2v),
         )
     } else {
-        // s0,s1,s2 feed only the leg-0 reduction and the output Plantards (which
-        // tolerate < 8p), so they stay lazy in [0,4p); only y0 (untwiddled, must be
-        // [0,2p) for the next stage) is reduced, in one 8p->2p two-step.
+        // The twiddled outputs feed signed-tolerant Plantards (correct for inputs in
+        // (-32p,32p)), so the difference legs need NO bias add: s1 and the y2/y3 inputs
+        // are kept SIGNED. Only y0 (untwiddled, must be [0,2p) for the next stage) is
+        // reduced; its sums stay unsigned.
         let p4v = p2v.add(p2v);
         let s0 = a.add(c); // [0,4p)
         let s2 = b.add(d); // [0,4p)
-        let s1 = a.add(p2v).sub(c); // [0,4p)
+        let s1 = a.sub(c); // signed (-2p,2p)
         let y0 = red2p_l(red2p_l(s0.add(s2), p4v), p2v); // [0,8p) -> [0,2p)
         (
             y0,
-            plantard_lv(s1.add(is3), t1p, pv, cav), // y1 in [0,6p)
-            plantard_lv(s0.add(p4v).sub(s2), t2p, pv, cav), // y2 in (0,8p)
-            plantard_lv(s1.add(p2v).sub(is3), t3p, pv, cav), // y3 in (0,6p)
+            plantard_lv(s1.add(is3), t1p, pv, cav), // y1 input in (-2p,4p)
+            plantard_lv(s0.sub(s2), t2p, pv, cav), // y2 input in (-4p,4p)
+            plantard_lv(s1.sub(is3), t3p, pv, cav), // y3 input in (-4p,2p)
         )
     }
 }
@@ -577,7 +608,7 @@ unsafe fn dif4_2_simd(
 ) {
     let pv = L::splat(p);
     let p2v = L::splat(p << 1);
-    let cav = L::splat((1u64 << 32) + 1);
+    let cav = L::splat((1u64 << 32) + 2);
     let icpv = L::splat(icp);
     // First stage (half-block N/4) with the psi pre-weight folded into the load. `ab`
     // holds the (a,b) operands already packed into lane pairs (built once, shared by all
@@ -667,7 +698,7 @@ unsafe fn dif_l1_v(t: &mut [L; 16], cav: L, icpv: L, pv: L, p2v: L) {
         let s0 = red2p_l(a.add(c), p2v);
         let s2 = red2p_l(b.add(d), p2v);
         let s1 = red2p_l(a.add(p2v).sub(c), p2v);
-        let s3 = b.add(p2v).sub(d); // [0,4p); feeds the 4th-root Plantard
+        let s3 = b.sub(d); // signed (-2p,2p); feeds the (signed-tolerant) 4th-root Plantard
         let is3 = plantard_lv(s3, icpv, pv, cav);
         *t.get_unchecked_mut(b4) = s0.add(s2); // [0,4p)
         *t.get_unchecked_mut(b4 + 1) = s1.add(is3); // [0,4p)
@@ -681,7 +712,7 @@ unsafe fn dif_l1_v(t: &mut [L; 16], cav: L, icpv: L, pv: L, p2v: L) {
 /// next sub-stage (`dit_l4_v`), whose `a` reduction and Plantards both tolerate [0,8p),
 /// so no per-input reductions are needed here.
 #[inline(always)]
-unsafe fn dit_l1_in2p(t: &mut [u64; 16], jcpv: L, pv: L, p2v: L, p4v: L, cav: L) {
+unsafe fn dit_l1_in2p(t: &mut [u64; 16], jcpv: L, pv: L, p2v: L, cav: L) {
     let tp = t.as_mut_ptr();
     // Pair butterflies (h, h+1) in the two lanes. Their legs are 4 apart, so inputs are
     // gathered and outputs scattered, but the radix-4 arithmetic and the J Plantard run
@@ -694,14 +725,16 @@ unsafe fn dit_l1_in2p(t: &mut [u64; 16], jcpv: L, pv: L, p2v: L, p4v: L, cav: L)
         let c = L::new(*tp.add(b0 + 2), *tp.add(b1 + 2));
         let d = L::new(*tp.add(b0 + 3), *tp.add(b1 + 3));
         let s0 = a.add(c); // [0,4p)
-        let s1 = a.add(p2v).sub(c); // [0,4p)
+        let s1 = a.sub(c); // signed (-2p,2p)
         let s2 = b.add(d); // [0,4p)
-        let s3 = b.add(p2v).sub(d); // [0,4p)
-        let js3 = plantard_lv(s3, jcpv, pv, cav);
+        let s3 = b.sub(d); // signed (-2p,2p)
+        let js3 = plantard_lv(s3, jcpv, pv, cav); // [0,2p)
+        // o0 feeds the next sub-stage's `a` reduction (unsigned); o1/o2/o3 feed its
+        // signed-tolerant Plantards, so their difference legs need no bias add.
         let o0 = s0.add(s2);
         let o1 = s1.add(js3);
-        let o2 = s0.add(p4v).sub(s2);
-        let o3 = s1.add(p2v).sub(js3);
+        let o2 = s0.sub(s2);
+        let o3 = s1.sub(js3);
         *tp.add(b0) = o0.lane0();
         *tp.add(b1) = o0.lane1();
         *tp.add(b0 + 1) = o1.lane0();
@@ -743,40 +776,47 @@ unsafe fn dit_l4_v(t: &mut [u64; 16], iwp: &[u64; N], cav: L, jcpv: L, pv: L, p2
 /// [0,8p). Vectorized: butterflies `j` and `j+1` ride the two lanes (adjacent slots ->
 /// contiguous v128 load/store; per-lane twiddles loaded as pairs).
 #[cfg_attr(target_arch = "wasm32", target_feature(enable = "simd128"))]
-unsafe fn dit4_middle(x: &mut [u64; N], iwp: &[u64; N], jcp: u64, p: u64) {
-    let pv = L::splat(p);
-    let p2v = L::splat(p << 1);
-    let cav = L::splat((1u64 << 32) + 1);
+unsafe fn dit4_middle(x: &mut [u64; N], t: &PrimeTables, jcp: u64) {
+    let pv = L::splat(t.p);
+    let p2v = L::splat(t.p << 1);
+    let cav = L::splat((1u64 << 32) + 2);
     let jcpv = L::splat(jcp);
     let xp = x.as_mut_ptr();
-    // Butterfly-outer loop: the per-lane twiddles depend only on the column `j`, not
-    // the block `i`, so they are loaded once and reused across the inner block loop.
-    let mut len = 16;
-    while len < N / 4 {
-        let step = N / (4 * len);
-        let mut j = 0;
-        while j < len {
-            let e0 = j * step;
-            let e1 = e0 + step;
-            let (t1p, t2p, t3p) = twiddles3_l(iwp, e0, e1);
-            let mut i = 0;
-            while i < N {
-                let base = i + j;
-                let a = L::load(xp.add(base));
-                let b = L::load(xp.add(base + len));
-                let c = L::load(xp.add(base + 2 * len));
-                let d = L::load(xp.add(base + 3 * len));
-                let (o0, o1, o2, o3) =
-                    r4_lazy_dit_l(a, b, c, d, pv, p2v, cav, jcpv, t1p, t2p, t3p);
-                L::store(xp.add(base), o0);
-                L::store(xp.add(base + len), o1);
-                L::store(xp.add(base + 2 * len), o2);
-                L::store(xp.add(base + 3 * len), o3);
-                i += 4 * len;
-            }
-            j += 2;
+    dit_mid_stage::<16>(xp, 16, &t.m16, pv, p2v, cav, jcpv);
+    dit_mid_stage::<64>(xp, 64, &t.m64, pv, p2v, cav, jcpv);
+}
+
+/// One strided inverse DIT stage (half-block `len`). Butterfly-outer loop: the per-lane
+/// twiddles depend only on the column `j`, so each adjacent pair (j, j+1) is loaded once
+/// (one `L::load` per twiddle from the compact `m` tables) and reused across the inner
+/// block loop.
+#[allow(clippy::too_many_arguments)]
+#[inline(always)]
+unsafe fn dit_mid_stage<const M: usize>(
+    xp: *mut u64, len: usize, m: &[[u64; M]; 3], pv: L, p2v: L, cav: L, jcpv: L,
+) {
+    let (m0, m1, m2) = (m[0].as_ptr(), m[1].as_ptr(), m[2].as_ptr());
+    let mut j = 0;
+    while j < len {
+        let t1p = L::load(m0.add(j));
+        let t2p = L::load(m1.add(j));
+        let t3p = L::load(m2.add(j));
+        let mut i = 0;
+        while i < N {
+            let base = i + j;
+            let a = L::load(xp.add(base));
+            let b = L::load(xp.add(base + len));
+            let c = L::load(xp.add(base + 2 * len));
+            let d = L::load(xp.add(base + 3 * len));
+            let (o0, o1, o2, o3) =
+                r4_lazy_dit_l(a, b, c, d, pv, p2v, cav, jcpv, t1p, t2p, t3p);
+            L::store(xp.add(base), o0);
+            L::store(xp.add(base + len), o1);
+            L::store(xp.add(base + 2 * len), o2);
+            L::store(xp.add(base + 3 * len), o3);
+            i += 4 * len;
         }
-        len <<= 2;
+        j += 2;
     }
 }
 
@@ -827,7 +867,7 @@ unsafe fn boundary_simd(xab: &[L; N], out: &mut [u64; N], t: &PrimeTables) {
     let p2 = p << 1;
     let pv = L::splat(p);
     let p2v = L::splat(p2);
-    let cav = L::splat((1u64 << 32) + 1);
+    let cav = L::splat((1u64 << 32) + 2);
     let icfpv = L::splat(t.wp[N / 4]); // forward 4th root I, Plantard const (broadcast)
     let jcp = t.iwp[N / 4]; // inverse 4th root J, Plantard const
     let jcpv = L::splat(jcp);
@@ -852,7 +892,7 @@ unsafe fn boundary_simd(xab: &[L; N], out: &mut [u64; N], t: &PrimeTables) {
             L::store(tcp.add(k), mont_mul_l(av, bv, pv, pinvv, maskv));
             k += 2;
         }
-        dit_l1_in2p(&mut tc, jcpv, pv, p2v, L::splat(p << 2), cav);
+        dit_l1_in2p(&mut tc, jcpv, pv, p2v, cav);
         dit_l4_v(&mut tc, &t.iwp, cav, jcpv, pv, p2v);
         for k in 0..16 {
             *out.get_unchecked_mut(i + k) = *tc.get_unchecked(k);
@@ -868,7 +908,7 @@ fn convolve_prefinal(t: &PrimeTables, ab: &[L; N]) -> [u64; N] {
     let mut x = [0u64; N];
     unsafe {
         fwd_boundary(t, ab, &mut x); // forward (SIMD a/b) + pointwise + first inv stages
-        dit4_middle(&mut x, &t.iwp, t.iwp[N / 4], t.p); // middle inverse stages (SIMD)
+        dit4_middle(&mut x, t, t.iwp[N / 4]); // middle inverse stages (SIMD)
     }
     x
 }
@@ -928,15 +968,15 @@ pub fn plan_new() -> Plan {
 unsafe fn crt_one(r0: L, r1: L, r2: L, plan: &Plan, cav: L) -> L {
     let p1v = L::splat(P1);
     let p2v = L::splat(P2);
-    let p2_3v = L::splat(3 * P2);
     let v0 = r0; // < P0 < P1
-    // v1 = (r1 - v0) * inv(P0) mod P1.
-    let t1 = r1.add(p1v).sub(v0); // [0, 2*P1)
+    // v1 = (r1 - v0) * inv(P0) mod P1. The signed-tolerant Plantard accepts the bare
+    // difference (in (-P0, 2*P1)), so no +P1 bias is needed.
+    let t1 = r1.sub(v0); // signed (-P0, 2*P1)
     let v1 = redp_l(plantard_lv(t1, L::splat(plan.inv_p0_mod_p1_p), p1v, cav), p1v);
-    // w = (v0 + P0*v1) mod P2; term stays lazy in [0,2*P2) (absorbed by the 3*P2 bias).
+    // w = (v0 + P0*v1) mod P2; term stays lazy in [0,2*P2).
     let term = plantard_lv(v1, L::splat(plan.p0_mod_p2_p), p2v, cav); // [0, 2*P2)
     let w = v0.add(term); // < P0 + 2*P2 < 3*P2
-    let t2 = r2.add(p2_3v).sub(w); // (0, 4*P2)
+    let t2 = r2.sub(w); // signed (-3*P2, 2*P2); fed straight to the signed Plantard
     let v2 = redp_l(plantard_lv(t2, L::splat(plan.inv_m01_mod_p2_p), p2v, cav), p2v);
     // u = v0 + P0*v1 + P0*P1*v2 ; low 32 bits = product mod 2^32, sign from v2.
     let lo = v0.add(L::splat(plan.p0_lo as u64).mul(v1)).add(L::splat(plan.m01_lo as u64).mul(v2));
@@ -950,7 +990,7 @@ unsafe fn crt_one(r0: L, r1: L, r2: L, plan: &Plan, cav: L) -> L {
 /// arrays are never written to or read back from memory.
 #[cfg_attr(target_arch = "wasm32", target_feature(enable = "simd128"))]
 unsafe fn final_crt(x0: &[u64; N], x1: &[u64; N], x2: &[u64; N], plan: &Plan, res: &mut [u32; N]) {
-    let cav = L::splat((1u64 << 32) + 1);
+    let cav = L::splat((1u64 << 32) + 2);
     let rp = res.as_mut_ptr();
     let mut j = 0;
     while j < N / 4 {
